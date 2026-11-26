@@ -122,6 +122,7 @@ export type ClientErpProvider =
 export const ClientErpProvider = {
   MIREDATA: "MIREDATA",
   MANSE: "MANSE",
+  BLING: "BLING",
 } as const;
 
 export interface Client {

@@ -23,3 +23,6 @@ export * from "./api-tokens";
 export * from "./ga4DailyMetrics";
 export * from "./ga4ProductViewsDaily";
 export * from "./braavo";
+
+export * from "./bling";
+export * from "./googleAds";

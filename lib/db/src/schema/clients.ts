@@ -8,6 +8,7 @@ import {
   index,
   uniqueIndex,
   date,
+  jsonb,
 } from "drizzle-orm/pg-core";
 import { nanoid } from "nanoid";
 import { usersTable } from "./users";
@@ -60,12 +61,33 @@ export const clientsTable = pgTable(
     erpDataset: text("erp_dataset"),
     // Qual ERP esse client usa (nenhum = null). A credencial correspondente fica em
     // `erpCredentialsEncrypted` — nunca em texto puro (ver lib/erp-crypto.ts).
-    erpProvider: text("erp_provider", { enum: ["MIREDATA", "MANSE"] }),
+    erpProvider: text("erp_provider", { enum: ["MIREDATA", "MANSE", "BLING"] }),
     // Blob cifrado (AES-256-GCM, formato "iv:authTag:ciphertext") com um JSON cujos
     // campos variam por `erpProvider`: {apikey} pro Miredata; {token, filial?,
     // priceField?} pro Manse. Decifrar só na hora de disparar o backfill
     // (ver routes/clients.ts, POST /clients/:id/erp/backfill).
     erpCredentialsEncrypted: text("erp_credentials_encrypted"),
+    // Estado do ultimo backfill historico de ERP disparado pelo painel (ver
+    // POST/GET /clients/:id/erp/backfill em routes/clients.ts) -- guarda o nome
+    // da operacao do Cloud Run de cada pedaco pra dar pra consultar status
+    // depois (botao nao mostrava nada rodando, so o toast que some: pedido do
+    // Victor 24/11/2026 depois de clicar varias vezes sem saber se ia).
+    erpBackfillStatus: jsonb("erp_backfill_status").$type<{
+      dispatchedAt: string;
+      chunks: Array<{
+        dataInicio: string;
+        dataFim: string;
+        operationName: string | null;
+        dispatchError?: string;
+        // Preenchido na PRIMEIRA vez que a consulta ao Cloud Run devolve done=true
+        // (sucesso ou falha) -- depois disso nunca mais consulta de novo esse pedaco.
+        // Sem isso, uma falha passageira na consulta (ver getOperationStatus) fazia
+        // um pedaco JA CONCLUIDO parecer "rodando" nas pollagens seguintes, e o status
+        // geral ficava piscando concluido/rodando (achado 24/11/2026, Marcelo: "parece
+        // que ta dando reload").
+        resolved?: { succeeded: boolean; message: string | null; completedAt: string | null };
+      }>;
+    }>(),
     // Abas do menu lateral escondidas manualmente pra esse client (valores
     // = `href` do item, ex: "/erp", "/performance" — ver NAV_ITEM_HREFS em
     // app-layout.tsx). `null`/vazio = mostra tudo (comportamento de antes,

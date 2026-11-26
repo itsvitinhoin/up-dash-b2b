@@ -1,3 +1,4 @@
+import { saveBlingConfiguration } from "../services/bling-sync";
 import { saoPauloDateOnly, coerceDateQuery as coerceClientsQuery } from "../lib/reporting-period";
 import { paidOrderStatus, paidRevenueColumn } from "../services/metric-rules";
 import { Router, type IRouter } from "express";
@@ -66,6 +67,7 @@ import {
 } from "../services/vesti-sync-service";
 import { BraavoError, normalizeBraavoDomain } from "../services/braavo-api";
 import { encryptErpCredentials, decryptErpCredentials } from "../lib/erp-crypto";
+import { getOperationStatus } from "../services/cloud-run-jobs";
 
 const router: IRouter = Router();
 
@@ -84,7 +86,7 @@ function getGlobalMetaAccessToken(fallback?: string | null): string | null {
 }
 
 function clientPublicFields<T extends typeof clientsTable.$inferSelect>(client: T) {
-  const { braavoApiToken: _braavoToken, braavoApiKey: _braavoKey, ...publicClient } = client;
+  const { braavoApiToken: _braavoToken, braavoApiKey: _braavoKey, erpCredentialsEncrypted: _erpCredentials, ...publicClient } = client;
   return {
     ...publicClient,
     hasBraavoIntegration: Boolean(client.commercePlatform === "BRAAVO" && client.braavoDomain && client.braavoApiToken && client.braavoApiKey),
@@ -97,7 +99,7 @@ function clientPublicFields<T extends typeof clientsTable.$inferSelect>(client: 
         client.ga4ApiSecret?.trim(),
     ),
     // As páginas ERP e "Desempenho > Visão Geral" respondem 404 NO_ERP_INTEGRATION sem dataset de ERP; a tela usa isto para esconder o menu.
-    hasErpIntegration: Boolean(client.erpDataset?.trim()),
+    hasErpIntegration: client.erpProvider === "BLING" || Boolean(client.erpDataset?.trim()),
   };
 }
 
@@ -1648,6 +1650,7 @@ const ManseCredentialsBody = z.object({
 const SetClientErpBody = z.discriminatedUnion("erpProvider", [
   z.object({ erpProvider: z.literal("MIREDATA"), erpDataset: z.string().min(1), credentials: MiredataCredentialsBody }),
   z.object({ erpProvider: z.literal("MANSE"), erpDataset: z.string().min(1), credentials: ManseCredentialsBody }),
+  z.object({ erpProvider: z.literal("BLING"), credentials: z.object({ useServerApp: z.boolean().optional(), clientId: z.string().trim().max(200).optional(), clientSecret: z.string().trim().max(1000).optional() }).strict() }),
   z.object({ erpProvider: z.null() }),
 ]);
 
@@ -1673,6 +1676,16 @@ router.put("/clients/:clientId/erp", requireAdmin, async (req, res): Promise<voi
   const [existing] = await db.select({ id: clientsTable.id }).from(clientsTable).where(eq(clientsTable.id, clientId));
   if (!existing) {
     res.status(404).json({ error: true, code: "NOT_FOUND", message: "Client not found", status: 404 });
+    return;
+  }
+
+  if (body.data.erpProvider === "BLING") {
+    try { res.json(await saveBlingConfiguration(clientId, body.data.credentials)); }
+    catch (error) {
+      const status = error && typeof error === "object" && "status" in error && typeof error.status === "number" ? error.status : 500;
+      const message = error instanceof Error && status < 500 ? error.message : "Não foi possível salvar a configuração Bling.";
+      res.status(status).json({ error: true, code: "BLING_CONFIGURATION_ERROR", message, status });
+    }
     return;
   }
 
@@ -1766,6 +1779,10 @@ router.post("/clients/:clientId/erp/backfill", requireAdmin, async (req, res): P
     res.status(404).json({ error: true, code: "NOT_FOUND", message: "Client not found", status: 404 });
     return;
   }
+  if (client.erpProvider === "BLING") {
+    res.status(400).json({ error: true, code: "INVALID_ERP_OPERATION", message: "Use a sincronização Bling no cadastro de ERP da marca.", status: 400 });
+    return;
+  }
   if (!client.erpProvider || !client.erpDataset || !client.erpCredentialsEncrypted) {
     res.status(400).json({ error: true, code: "VALIDATION_ERROR", message: "Este client não tem ERP configurado", status: 400 });
     return;
@@ -1803,7 +1820,7 @@ router.post("/clients/:clientId/erp/backfill", requireAdmin, async (req, res): P
         }),
       }).then(async (r) => {
         if (!r.ok) throw new Error(`${r.status} ${await r.text()}`);
-        return r.json();
+        return r.json() as Promise<{ executionName?: string }>;
       }),
     ),
   );
@@ -1813,9 +1830,25 @@ router.post("/clients/:clientId/erp/backfill", requireAdmin, async (req, res): P
     return {
       ...chunk,
       ok: outcome.status === "fulfilled",
+      operationName: outcome.status === "fulfilled" ? (outcome.value.executionName ?? null) : null,
       error: outcome.status === "rejected" ? String(outcome.reason) : undefined,
     };
   });
+
+  await db
+    .update(clientsTable)
+    .set({
+      erpBackfillStatus: {
+        dispatchedAt: new Date().toISOString(),
+        chunks: results.map((r) => ({
+          dataInicio: r.dataInicio,
+          dataFim: r.dataFim,
+          operationName: r.operationName,
+          ...(r.error ? { dispatchError: r.error } : {}),
+        })),
+      },
+    })
+    .where(eq(clientsTable.id, clientId));
 
   const failedCount = results.filter((r) => !r.ok).length;
   res.status(failedCount === results.length ? 502 : 202).json({
@@ -1823,6 +1856,86 @@ router.post("/clients/:clientId/erp/backfill", requireAdmin, async (req, res): P
     totalChunks: results.length,
     failedChunks: failedCount,
     chunks: results,
+  });
+});
+
+/**
+ * GET /clients/:clientId/erp/backfill/status
+ * Consulta o status (rodando/concluido/falhou) do ultimo backfill de ERP
+ * disparado pelo painel pra esse client -- guardado em `erpBackfillStatus`
+ * na hora do POST acima. So devolve o resumo seguro de `getOperationStatus`,
+ * nunca os dados crus da operacao (tem credencial em texto puro no env
+ * override, ver cloud-run-jobs.ts).
+ */
+router.get("/clients/:clientId/erp/backfill/status", requireAdmin, async (req, res): Promise<void> => {
+  const params = GetClientParams.safeParse(req.params);
+  if (!params.success) {
+    res.status(400).json({ error: true, code: "VALIDATION_ERROR", message: params.error.message, status: 400 });
+    return;
+  }
+  const [client] = await db
+    .select({ erpBackfillStatus: clientsTable.erpBackfillStatus })
+    .from(clientsTable)
+    .where(eq(clientsTable.id, params.data.clientId));
+  if (!client) {
+    res.status(404).json({ error: true, code: "NOT_FOUND", message: "Client not found", status: 404 });
+    return;
+  }
+  if (!client.erpBackfillStatus) {
+    res.json({ hasRun: false });
+    return;
+  }
+
+  let storedChanged = false;
+  const storedChunks = client.erpBackfillStatus.chunks;
+  const chunks = await Promise.all(
+    storedChunks.map(async (chunk, i) => {
+      if (chunk.resolved) {
+        return { dataInicio: chunk.dataInicio, dataFim: chunk.dataFim, done: true, ...chunk.resolved };
+      }
+      if (!chunk.operationName) {
+        storedChunks[i] = { ...chunk, resolved: { succeeded: false, message: chunk.dispatchError ?? "Falha ao disparar", completedAt: null } };
+        storedChanged = true;
+        return { dataInicio: chunk.dataInicio, dataFim: chunk.dataFim, done: true, ...storedChunks[i].resolved! };
+      }
+      try {
+        const status = await getOperationStatus(chunk.operationName);
+        if (status.done) {
+          storedChunks[i] = {
+            ...chunk,
+            resolved: { succeeded: status.succeeded ?? false, message: status.message, completedAt: status.completedAt },
+          };
+          storedChanged = true;
+        }
+        return { dataInicio: chunk.dataInicio, dataFim: chunk.dataFim, ...status };
+      } catch (err) {
+        // Falha so na CONSULTA (ex: instabilidade pontual na API do Cloud Run) --
+        // nao grava nada: o pedaco continua "ainda nao resolvido" e tenta de novo
+        // no proximo poll, em vez de fingir que terminou ou voltar a aparecer como
+        // rodando depois de ja ter concluido (ver comentario no schema).
+        return { dataInicio: chunk.dataInicio, dataFim: chunk.dataFim, done: false, succeeded: null, message: err instanceof Error ? err.message : String(err) };
+      }
+    }),
+  );
+
+  if (storedChanged) {
+    await db
+      .update(clientsTable)
+      .set({ erpBackfillStatus: { ...client.erpBackfillStatus, chunks: storedChunks } })
+      .where(eq(clientsTable.id, params.data.clientId));
+  }
+
+  const overallStatus: "running" | "done" | "failed" = chunks.some((c) => !c.done)
+    ? "running"
+    : chunks.every((c) => c.succeeded)
+      ? "done"
+      : "failed";
+
+  res.json({
+    hasRun: true,
+    dispatchedAt: client.erpBackfillStatus.dispatchedAt,
+    status: overallStatus,
+    chunks,
   });
 });
 

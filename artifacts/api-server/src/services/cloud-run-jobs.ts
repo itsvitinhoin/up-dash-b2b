@@ -26,6 +26,22 @@ export class CloudRunJobError extends Error {
   }
 }
 
+// Uma unica instancia reaproveitada entre chamadas -- `getClient()` ja cuida
+// de cachear/renovar o token sozinho; recriar o `GoogleAuth` a cada chamada
+// (como era antes) re-le a credencial toda vez, o que deixava o status do
+// backfill de ERP lento quando consulta 5 pedacos em paralelo a cada poll.
+let sharedAuth: GoogleAuth | null = null;
+function getSharedAuth(): GoogleAuth {
+  if (!sharedAuth) {
+    const credentials = serviceAccountFromEnv();
+    sharedAuth = new GoogleAuth({
+      ...(credentials ? { credentials } : {}),
+      scopes: ["https://www.googleapis.com/auth/cloud-platform"],
+    });
+  }
+  return sharedAuth;
+}
+
 function serviceAccountFromEnv(): { client_email: string; private_key: string } | null {
   const raw =
     process.env.GOOGLE_APPLICATION_CREDENTIALS_JSON ??
@@ -68,14 +84,9 @@ export function braavoBackfillRequest(clientId: string) {
 
 /** Inicia a execução e devolve o nome dela (sem esperar o fim: a carga leva horas). */
 export async function runBraavoBackfillJob(clientId: string): Promise<{ execution: string }> {
-  const credentials = serviceAccountFromEnv();
-  const auth = new GoogleAuth({
-    ...(credentials ? { credentials } : {}),
-    scopes: ["https://www.googleapis.com/auth/cloud-platform"],
-  });
   const { url, body } = braavoBackfillRequest(clientId);
   try {
-    const client = await auth.getClient();
+    const client = await getSharedAuth().getClient();
     const response = await client.request<{ metadata?: { name?: string }; name?: string }>({
       url,
       method: "POST",
@@ -96,4 +107,49 @@ export async function runBraavoBackfillJob(clientId: string): Promise<{ executio
       "CLOUD_RUN_UNAVAILABLE",
     );
   }
+}
+
+export type OperationStatus = {
+  done: boolean;
+  succeeded: boolean | null;
+  message: string | null;
+  completedAt: string | null;
+};
+
+type RawOperation = {
+  done?: boolean;
+  error?: { message?: string };
+  metadata?: {
+    completionTime?: string;
+    conditions?: Array<{ type?: string; state?: string; message?: string }>;
+  };
+};
+
+/**
+ * Consulta o status de uma operacao do Cloud Run (o "name" devolvido por um
+ * `jobs.run`, formato `projects/*\/locations/*\/operations/*`) -- usado pelo
+ * backfill de ERP pra dar pra mostrar "rodando"/"concluido" no painel em vez
+ * de nada (pedido do Victor 24/11/2026).
+ *
+ * So devolve done/succeeded/message/completedAt: a resposta crua da Google
+ * inclui `metadata.template.containers[].env` com a credencial do ERP em
+ * texto puro (mesma exposicao documentada em script-vesti-nuvem/main.py,
+ * _dispatch_erp_job) -- nunca repassar `metadata`/`response` inteiros pro
+ * navegador.
+ */
+export async function getOperationStatus(operationName: string): Promise<OperationStatus> {
+  const client = await getSharedAuth().getClient();
+  const response = await client.request<RawOperation>({
+    url: `https://run.googleapis.com/v2/${operationName}`,
+    method: "GET",
+    timeout: 30_000,
+  });
+  const op = response.data;
+  const completedCondition = op.metadata?.conditions?.find((c) => c.type === "Completed");
+  return {
+    done: Boolean(op.done),
+    succeeded: op.done ? (op.error ? false : completedCondition ? completedCondition.state === "CONDITION_SUCCEEDED" : true) : null,
+    message: op.error?.message ?? completedCondition?.message ?? null,
+    completedAt: op.metadata?.completionTime ?? null,
+  };
 }

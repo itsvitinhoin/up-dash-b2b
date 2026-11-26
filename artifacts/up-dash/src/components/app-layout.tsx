@@ -484,6 +484,7 @@ type AdminClientOption = {
   currency: string;
   locale: string;
   commercePlatform: Client["commercePlatform"] | null;
+  erpProvider: Client["erpProvider"];
   // Abas do menu lateral escondidas manualmente pra esse client (admin
   // configura em /clients — ver VisibleTabsDialog). Null/vazio = mostra
   // tudo que já seria mostrado pelas regras de B2B/B2C/Vesti de sempre.
@@ -500,6 +501,7 @@ function toAdminClientOption(client: Client): AdminClientOption {
     currency: client.currency,
     locale: client.locale,
     commercePlatform: client.commercePlatform ?? null,
+    erpProvider: client.erpProvider ?? null,
     hiddenNavItems: client.hiddenNavItems ?? null,
     hasErpIntegration: client.hasErpIntegration ?? null,
   };
@@ -530,6 +532,7 @@ function readCachedAdminClients(): AdminClientOption[] {
             typeof client?.commercePlatform === "string"
               ? client.commercePlatform
               : null,
+          erpProvider: ["BLING", "MANSE", "MIREDATA"].includes(client?.erpProvider) ? client.erpProvider : null,
           hiddenNavItems: Array.isArray(client?.hiddenNavItems)
             ? client.hiddenNavItems
             : null,
@@ -824,6 +827,9 @@ export function AppLayout({ children }: AppLayoutProps) {
     ? {
         ...inheritedMeta,
         title: selectedDashboardMode === "B2C" && architecture.title === "Cadastros" ? "Clientes" : architecture.title,
+        ...(architecture.page === "google-ads"
+          ? { hasFilterBar: false, subtitle: "Campanhas, investimento e conversões do Google Ads" }
+          : {}),
         ...(architecture.page === "monthly-history"
           ? { hasDateRange: false, subtitle: "Métricas consolidadas por mês" }
           : {}),
@@ -904,8 +910,18 @@ export function AppLayout({ children }: AppLayoutProps) {
   // páginas. Os botões 7/30/90 dias não aparecem aqui (o seletor do topo já tem essas opções e mais).
   const isOverviewRoute = location === "/" || location === "/dashboard";
   const paidOnlyText = language === "pt" ? "só pedidos pagos" : language === "ko" ? "결제 완료 주문만" : "paid orders only";
-  const subtitleText =
-    location === "/" || location === "/dashboard"
+  const blingSubtitles: Record<string, string> = {
+    "/erp": "Pedidos, compradores, produtos e estoque do Bling",
+    "/erp/pedidos": "Pedidos de todos os canais, com itens e conferência Nuvemshop",
+    "/erp/clientes": "Compradores e frequência nos pedidos importados",
+    "/erp/produtos": "Catálogo, unidades em pedidos e disponibilidade",
+    "/erp/estoque": "Saldos físicos e disponíveis por produto e depósito",
+    "/erp/vendedores": "Vendedores e lojas da fonte ERP Bling",
+    "/erp/geografia": "Distribuição geográfica da fonte ERP Bling",
+  };
+  const subtitleText = activeClient?.erpProvider === "BLING" && blingSubtitles[location]
+    ? tx(blingSubtitles[location])
+    : location === "/" || location === "/dashboard"
       ? `${new Intl.DateTimeFormat(language === "pt" ? "pt-BR" : language === "ko" ? "ko-KR" : "en-US", { weekday: "long", day: "numeric", month: "long" }).format(new Date())} · ${DESIGN_DEMO ? "prévia visual" : t("page.dashboard.live", "live data")} · ${paidOnlyText}`
       : pageTranslationKey
         ? t(`page.${pageTranslationKey}.subtitle`, tx(meta.subtitle))
@@ -945,6 +961,7 @@ export function AppLayout({ children }: AppLayoutProps) {
   const isVestiClient = activeClient?.commercePlatform === "VESTI";
   const isB2BOnlyRoute = useCallback(
     (href: string) => {
+      if (href === "/erp" || href.startsWith("/erp/")) return false;
       const entry = architectureForPath(href);
       return (
         Boolean(entry && "b2bOnly" in entry && entry.b2bOnly) ||

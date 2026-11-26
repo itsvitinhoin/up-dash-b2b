@@ -34,8 +34,8 @@
 # de atribuição lento/com falha na primeira carga de um período novo -- ver
 # services/extraction-runner.ts) JÁ RODA em produção como um recurso Cloud
 # Run Job separado, `upzero-sync-job-paid-touchpoints`, com trigger próprio
-# (`upzero-sync-job-paid-touchpoints-schedule`, a cada 6h, criado em
-# 10/09/2026) -- confirmado via `gcloud scheduler jobs describe` nesse dia,
+# (`upzero-sync-job-paid-touchpoints-schedule`, criado em 10/09/2026) --
+# confirmado via `gcloud scheduler jobs describe` nesse dia,
 # nenhum dos dois documentado aqui até agora. O sintoma que motivou essa
 # investigação (relatório de MX Fashion lento/com falha) NÃO era falta de
 # agendamento -- era o caminho ao vivo (erp-attribution.ts) pedindo uma
@@ -54,10 +54,17 @@
 #     --max-retries=1 \
 #     --task-timeout=30m
 #
+# Achado 25/11/2026: UpZero passou a só aceitar /analytics/facts entre
+# 3h-5h (horário de Brasília) -- reagendado de "a cada 6h" (UTC, nunca
+# caía dentro da janela certa) pra rodar 4x só dentro dela, já que cada
+# execução tem 30min de timeout (--task-timeout acima). Ver
+# paid-touchpoints.ts (UPZERO_FACTS_WINDOW_*) pro detalhe.
+#
 #   gcloud scheduler jobs create http upzero-sync-job-paid-touchpoints-schedule \
 #     --project=up-vesti-report \
 #     --location=us-central1 \
-#     --schedule="0 */6 * * *" \
+#     --schedule="0,30 3,4 * * *" \
+#     --time-zone="America/Sao_Paulo" \
 #     --uri="https://us-central1-run.googleapis.com/v2/projects/up-vesti-report/locations/us-central1/jobs/upzero-sync-job-paid-touchpoints:run" \
 #     --http-method=POST \
 #     --oauth-service-account-email=<service-account-com-permissao-run.jobs.run>

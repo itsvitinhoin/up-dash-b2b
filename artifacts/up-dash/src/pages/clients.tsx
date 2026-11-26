@@ -1,3 +1,4 @@
+import { BlingIntegration } from "@/components/bling-integration";
 import { useI18n } from "@/lib/i18n";
 import { useDisplayLabel } from "@/lib/display-label";
 import { useState, useEffect, useRef } from "react";
@@ -126,11 +127,12 @@ const COMMERCE_PLATFORM_OPTIONS: Array<{
 ];
 
 const ERP_PROVIDER_OPTIONS: Array<{
-  value: "MIREDATA" | "MANSE";
+  value: "MIREDATA" | "MANSE" | "BLING";
   label: string;
 }> = [
   { value: "MIREDATA", label: "Miredata" },
   { value: "MANSE", label: "Manse" },
+  { value: "BLING", label: "Bling" },
 ];
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -991,7 +993,7 @@ function PlatformDialog({
   );
 }
 
-type SetClientErpResponse = { ok: true; erpProvider: "MIREDATA" | "MANSE" | null; erpDataset?: string };
+type SetClientErpResponse = { ok: true; erpProvider: "MIREDATA" | "MANSE" | "BLING" | null; erpDataset?: string };
 type ErpBackfillChunkResult = { dataInicio: string; dataFim: string; ok: boolean; error?: string };
 type ErpBackfillResponse = {
   ok: boolean;
@@ -999,6 +1001,24 @@ type ErpBackfillResponse = {
   failedChunks: number;
   chunks: ErpBackfillChunkResult[];
 };
+type ErpBackfillStatusChunk = { dataInicio: string; dataFim: string; done: boolean; succeeded: boolean | null; message: string | null };
+type ErpBackfillStatusResponse =
+  | { hasRun: false }
+  | { hasRun: true; dispatchedAt: string; status: "running" | "done" | "failed"; chunks: ErpBackfillStatusChunk[] };
+
+function erpBackfillStatusQueryKey(clientId: string) {
+  return ["erp-backfill-status", clientId] as const;
+}
+
+function oneYearAgoIsoDate(): string {
+  const d = new Date();
+  d.setUTCFullYear(d.getUTCFullYear() - 1);
+  return d.toISOString().slice(0, 10);
+}
+
+function todayIsoDate(): string {
+  return new Date().toISOString().slice(0, 10);
+}
 
 function ErpDialog({
   clientId,
@@ -1008,11 +1028,11 @@ function ErpDialog({
 }: {
   clientId: string;
   clientName: string;
-  currentErpProvider: "MIREDATA" | "MANSE" | null | undefined;
+  currentErpProvider: "MIREDATA" | "MANSE" | "BLING" | null | undefined;
   currentErpDataset: string | null | undefined;
 }) {
   const [open, setOpen] = useState(false);
-  const [erpProvider, setErpProvider] = useState<"NONE" | "MIREDATA" | "MANSE">("NONE");
+  const [erpProvider, setErpProvider] = useState<"NONE" | "MIREDATA" | "MANSE" | "BLING">("NONE");
   const [erpDataset, setErpDataset] = useState("");
   const [apikey, setApikey] = useState("");
   const [token, setToken] = useState("");
@@ -1023,6 +1043,34 @@ function ErpDialog({
   const [dataFim, setDataFim] = useState("");
   const [isBackfilling, setIsBackfilling] = useState(false);
   const queryClient = useQueryClient();
+  const wasRunningRef = useRef(false);
+
+  const statusQuery = useQuery({
+    queryKey: erpBackfillStatusQueryKey(clientId),
+    queryFn: () => customFetch<ErpBackfillStatusResponse>(`/api/clients/${clientId}/erp/backfill/status`),
+    enabled: open && Boolean(currentErpProvider),
+    refetchInterval: (query) => (query.state.data?.hasRun && query.state.data.status === "running" ? 8000 : false),
+  });
+  const backfillStatus = statusQuery.data;
+  const isBackfillRunning = backfillStatus?.hasRun === true && backfillStatus.status === "running";
+
+  useEffect(() => {
+    if (isBackfillRunning) {
+      wasRunningRef.current = true;
+      return;
+    }
+    if (!wasRunningRef.current || backfillStatus?.hasRun !== true) return;
+    wasRunningRef.current = false;
+    const toastId = `erp-backfill-${clientId}`;
+    if (backfillStatus.status === "done") {
+      toast.success(`Backfill de ${clientName} concluído`, { id: toastId });
+    } else if (backfillStatus.status === "failed") {
+      toast.error(`Backfill de ${clientName} terminou com falha`, {
+        id: toastId,
+        description: backfillStatus.chunks.find((c) => !c.succeeded)?.message ?? undefined,
+      });
+    }
+  }, [isBackfillRunning, backfillStatus, clientId, clientName]);
 
   function handleOpen(o: boolean) {
     if (o) {
@@ -1032,8 +1080,8 @@ function ErpDialog({
       setToken("");
       setFilial("");
       setPriceField("");
-      setDataInicio("");
-      setDataFim("");
+      setDataInicio(oneYearAgoIsoDate());
+      setDataFim(todayIsoDate());
     }
     setOpen(o);
   }
@@ -1091,6 +1139,8 @@ function ErpDialog({
           description: `${data.totalChunks} pedaço(s) de até 90 dias`,
         });
       }
+      wasRunningRef.current = true;
+      statusQuery.refetch();
     } catch (err) {
       toast.error(`Falha ao disparar backfill`, {
         id: toastId,
@@ -1106,16 +1156,16 @@ function ErpDialog({
       <DialogTrigger asChild>
         <Button variant="ghost" size="sm" className="h-7 gap-1 text-xs" title="ERP">
           <Tag className="h-3 w-3" />
-          {currentErpProvider ?? "ERP"}
+          {currentErpProvider === "BLING" ? "Bling" : currentErpProvider ?? "ERP"}
         </Button>
       </DialogTrigger>
-      <DialogContent className="sm:max-w-[460px]">
+      <DialogContent className={erpProvider === "BLING" ? "sm:max-w-[720px] max-h-[85vh] overflow-y-auto" : "sm:max-w-[460px]"}>
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <Tag className="h-4 w-4" /> ERP
           </DialogTitle>
           <DialogDescription>
-            Integração de ERP de <strong>{clientName}</strong> (Miredata/Manse) — independente da plataforma de e-commerce.
+            Integração de ERP de <strong>{clientName}</strong> (Miredata, Manse ou Bling) — independente da plataforma de e-commerce.
           </DialogDescription>
         </DialogHeader>
 
@@ -1137,7 +1187,7 @@ function ErpDialog({
             </Select>
           </div>
 
-          {erpProvider !== "NONE" && (
+          {erpProvider !== "NONE" && erpProvider !== "BLING" && (
             <>
               <div className="space-y-2">
                 <Label htmlFor="erp-dataset">Dataset BigQuery (*_erp)</Label>
@@ -1199,42 +1249,66 @@ function ErpDialog({
           )}
         </div>
 
+        {erpProvider === "BLING" && <BlingIntegration key={clientId} clientId={clientId} />}
+
         <DialogFooter>
           <Button variant="outline" onClick={() => setOpen(false)} disabled={isSaving}>
             Cancelar
           </Button>
-          <Button onClick={handleSave} disabled={isSaving}>
+          {erpProvider !== "BLING" && <Button onClick={handleSave} disabled={isSaving}>
             {isSaving ? (
               <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Salvando…</>
             ) : (
               "Salvar"
             )}
-          </Button>
+          </Button>}
         </DialogFooter>
 
-        {currentErpProvider && (
+        {currentErpProvider && currentErpProvider !== "BLING" && erpProvider !== "BLING" && (
           <>
-            <div className="border-t pt-3 space-y-2">
+            <div className="border-t pt-3 space-y-3">
               <Label>Backfill histórico</Label>
-              <div className="grid grid-cols-2 gap-2">
-                <Input type="date" value={dataInicio} onChange={(e) => setDataInicio(e.target.value)} />
-                <Input type="date" value={dataFim} onChange={(e) => setDataFim(e.target.value)} />
+
+              {backfillStatus?.hasRun && (
+                <div className="flex items-center justify-between gap-2 rounded-md border bg-muted/40 px-3 py-2">
+                  {backfillStatus.status === "running" && (
+                    <Badge variant="secondary" className="gap-1">
+                      <Loader2 className="h-3 w-3 animate-spin" /> Rodando ({backfillStatus.chunks.filter((c) => c.done).length}/{backfillStatus.chunks.length} pedaços)
+                    </Badge>
+                  )}
+                  {backfillStatus.status === "done" && <Badge variant="default">Concluído</Badge>}
+                  {backfillStatus.status === "failed" && (
+                    <Badge variant="destructive" title={backfillStatus.chunks.find((c) => !c.succeeded)?.message ?? undefined}>
+                      Falhou
+                    </Badge>
+                  )}
+                  <span className="text-xs text-muted-foreground">
+                    último disparo: {format(new Date(backfillStatus.dispatchedAt), "d MMM, HH:mm")}
+                  </span>
+                </div>
+              )}
+
+              <div className="space-y-2">
+                <div className="grid grid-cols-2 gap-2">
+                  <Input type="date" value={dataInicio} onChange={(e) => setDataInicio(e.target.value)} />
+                  <Input type="date" value={dataFim} onChange={(e) => setDataFim(e.target.value)} />
+                </div>
+                <p className="text-xs text-muted-foreground">
+                  Dispara uma execução por pedaço de até 90 dias (necessário pela API do ERP). Usa a credencial já salva.
+                </p>
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  disabled={isBackfilling || isBackfillRunning || !dataInicio || !dataFim}
+                  onClick={handleBackfill}
+                >
+                  {isBackfilling ? (
+                    <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Disparando…</>
+                  ) : (
+                    "Fazer backfill histórico"
+                  )}
+                </Button>
               </div>
-              <p className="text-xs text-muted-foreground">
-                Dispara uma execução por pedaço de até 90 dias (necessário pela API do ERP). Usa a credencial já salva.
-              </p>
-              <Button
-                variant="secondary"
-                size="sm"
-                disabled={isBackfilling || !dataInicio || !dataFim}
-                onClick={handleBackfill}
-              >
-                {isBackfilling ? (
-                  <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Disparando…</>
-                ) : (
-                  "Fazer backfill histórico"
-                )}
-              </Button>
             </div>
           </>
         )}

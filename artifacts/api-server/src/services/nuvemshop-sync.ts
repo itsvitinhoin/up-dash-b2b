@@ -898,6 +898,7 @@ export async function syncNuvemshopClient(params: {
           clientId: params.clientId,
           customerId: upsertedCustomer.id,
           externalId: externalOrderId,
+          sourceMetadata: { nuvemshop: { orderNumber: order.number == null ? null : String(order.number) } },
           requestedQuantity,
           fulfilledQuantity: paid ? requestedQuantity : 0,
           amount: invoicedAmount,
@@ -917,6 +918,7 @@ export async function syncNuvemshopClient(params: {
         .onConflictDoUpdate({
           target: [ordersTable.clientId, ordersTable.externalId],
           set: {
+            sourceMetadata: sql`COALESCE(${ordersTable.sourceMetadata}, '{}'::jsonb) || ${JSON.stringify({ nuvemshop: { orderNumber: order.number == null ? null : String(order.number) } })}::jsonb`,
             customerId: upsertedCustomer.id,
             requestedQuantity,
             fulfilledQuantity: paid ? requestedQuantity : 0,

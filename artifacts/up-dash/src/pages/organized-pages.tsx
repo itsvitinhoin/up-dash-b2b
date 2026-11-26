@@ -1,3 +1,5 @@
+import { AdsNavigation } from "@/components/ads-navigation";
+import GoogleAdsPage from "@/pages/google-ads";
 import { useAuth } from "@/lib/auth";
 import { GlassMetricCard } from "@/components/glass-metric-card";
 import { BarChart3 } from "lucide-react";
@@ -420,6 +422,7 @@ function AdsPage() {
   const { pick } = useOrganizationData(ADS_SOURCES);
   return (
     <div className="space-y-6" data-testid="ads-page">
+      <AdsNavigation active="meta" />
       <MetricSection title={tx("VISÃO GERAL")} columns={4}>
         <Metrics
           metrics={pick(
@@ -519,6 +522,8 @@ export default function OrganizedPage({ page }: { page: ArchitecturePage }) {
       return <RegistrationPage />;
     case "ads":
       return <AdsPage />;
+    case "google-ads":
+      return <GoogleAdsPage />;
     case "attribution":
       return <AttributionPage />;
     case "customer-intelligence":

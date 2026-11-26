@@ -43,6 +43,7 @@ export interface DashboardKpiCardProps {
   comparisonValue?: number | null;
   comparisonUnavailable?: string;
   hideComparison?: boolean;
+  neutralComparison?: boolean;
   /** Metrica de custo (CAC, CPL, CPA...): variacao negativa e favorável e fica verde. */
   lowerIsBetter?: boolean;
 }
@@ -127,7 +128,7 @@ export function DashboardKpiCard({
   footer,
   deltaContent,
   changePositive,
-  className, info, source, previousValue, comparisonValue, comparisonUnavailable, hideComparison, lowerIsBetter,
+  className, info, source, previousValue, comparisonValue, comparisonUnavailable, hideComparison, lowerIsBetter, neutralComparison,
 }: DashboardKpiCardProps) {
   const reduced = useReducedMotion();
   const { language, tx } = useI18n();
@@ -212,7 +213,7 @@ export function DashboardKpiCard({
         </div>
 
         {!isLoading && !hideComparison && <div className="up-metric-comparison mb-4 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs" data-comparison-state={effectiveChange !== null ? "available" : comparison.status}>
-          {effectiveChange !== null && Number.isFinite(effectiveChange) ? <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full font-medium ${effectiveChange === 0 ? "up-delta-neutral" : positive ? "up-delta-positive" : "up-delta-negative"}`}>
+          {effectiveChange !== null && Number.isFinite(effectiveChange) ? <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full font-medium ${(effectiveChange === 0 || neutralComparison) ? "up-delta-neutral" : positive ? "up-delta-positive" : "up-delta-negative"}`}>
             {effectiveChange === 0 ? <Minus className="h-3 w-3" /> : rising ? <ArrowUpRight className="h-3 w-3" /> : <ArrowDownRight className="h-3 w-3" />}
             {effectiveChange > 0 ? "+" : ""}{effectiveChange.toLocaleString(numberLocale, { minimumFractionDigits: 1, maximumFractionDigits: 1 })}%
           </span> : <span className="up-delta-neutral rounded-full px-2 py-0.5">{comparison.status === "zero-base" ? tx("Sem base percentual") : previous === undefined && loadingPrevious ? tx("Calculando…") : tx("Indisponível")}</span>}

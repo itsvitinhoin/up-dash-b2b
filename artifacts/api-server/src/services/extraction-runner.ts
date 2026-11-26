@@ -6,7 +6,9 @@ import {
   ordersTable,
   sellersTable,
   syncJobsTable,
+  paidTouchpointsSyncTable,
 } from "@workspace/db";
+import { logger } from "../lib/logger";
 import { upsertMetaCreatives } from "./meta-ads";
 import { fetchStoredMarketingData } from "./stored-marketing";
 import { syncNuvemshopClient } from "./nuvemshop-sync";
@@ -186,6 +188,11 @@ async function completeJob(jobId: string, result: Record<string, unknown>) {
 
 async function failJob(jobId: string, err: unknown) {
   const message = err instanceof Error ? err.message : String(err);
+  // Achado 25/11/2026: até aqui o erro só ia pro Postgres (sync_jobs.error) --
+  // nunca aparecia no log do Cloud Run, só o resumo done/failed no fim do
+  // hourly_bundle. Loga aqui tambem pra dar pra ver a mensagem da API externa
+  // direto no Cloud Logging, sem precisar abrir o painel/banco.
+  logger.error({ err, jobId }, "[extraction-runner] job failed");
   await db
     .update(syncJobsTable)
     .set({
@@ -878,12 +885,15 @@ export async function runNuvemshopTransactionalExtraction(
 ): Promise<ExtractionRunSummary> {
   const startedAt = new Date();
   const requestedLookbackDays = options.lookbackDays ?? NUVEMSHOP_LOOKBACK_DAYS;
-  // Teto de 200 dias (cobre backfill de 6 meses com folga) -- era 30, travava
-  // recuperar historico mais antigo depois do fix de updated_at_min (ver
-  // reconciliacao Nuvemshop de 2026-09). Uso normal (cron incremental) passa
-  // poucos dias, entao isso so importa pra backfill manual via LOOKBACK_DAYS.
+  // Teto de 400 dias (cobre backfill do ano corrente inteiro desde 1/jan, com
+  // folga) -- era 200, e por isso o backfill de 2026-09-17 (Jini/Hot
+  // Pink/Giah/Aiyu) parou em 18/03/2026 em vez de ir ate janeiro: 200 dias
+  // antes de setembro cai em marco, nao no comeco do ano (achado 25/11/2026,
+  // reclamacao do time de B2C sobre faturamento "faltando" nessas marcas). Uso
+  // normal (cron incremental) passa poucos dias, entao isso so importa pra
+  // backfill manual via LOOKBACK_DAYS.
   const lookbackDays = Number.isFinite(requestedLookbackDays) && requestedLookbackDays > 0
-    ? Math.min(200, Math.max(1, requestedLookbackDays))
+    ? Math.min(400, Math.max(1, requestedLookbackDays))
     : 3;
   const maxPages = Number.isFinite(NUVEMSHOP_MAX_PAGES) && NUVEMSHOP_MAX_PAGES > 0
     ? NUVEMSHOP_MAX_PAGES
@@ -1325,10 +1335,16 @@ export async function runHourlyExtractionBundle(
 // produção (Cloud Run Job + Cloud Scheduler, sem Vercel/timeout de
 // serverless no meio).
 const PAID_TOUCHPOINTS_RECENT_ORDER_DAYS = Number.parseInt(process.env.PAID_TOUCHPOINTS_RECENT_ORDER_DAYS ?? "90", 10);
-// Mesma janela "sem teto" que o relatório usa por padrão hoje (ver
-// routes/analytics.ts, DEFAULT_LOOKBACK_DAYS) -- pré-aquece com a mesma
-// amplitude que vai ser pedida de verdade.
-const PAID_TOUCHPOINTS_SYNC_WINDOW_DAYS = Number.parseInt(process.env.PAID_TOUCHPOINTS_SYNC_WINDOW_DAYS ?? "3650", 10);
+// Teto da 1ª sincronização de um cliente novo (sem synced_to ainda) --
+// mesmo valor de TOUCHPOINT_LOOKBACK_DAYS (paid-touchpoints.ts), pelo
+// mesmo motivo (achado 25/11/2026: UpZero só aceita pedir 24h por vez,
+// então 3650 dias nunca foi viável de verdade). Clientes que já têm
+// sincronização anterior pedem só o GAP desde a última vez (ver
+// candidatesWithSyncState abaixo), não esse teto cheio.
+const PAID_TOUCHPOINTS_SYNC_WINDOW_DAYS = Number.parseInt(process.env.PAID_TOUCHPOINTS_SYNC_WINDOW_DAYS ?? "180", 10);
+// Overlap de segurança ao retomar de um synced_to anterior -- mesmo valor
+// de TOUCHPOINT_REFRESH_OVERLAP_MS (paid-touchpoints.ts).
+const PAID_TOUCHPOINTS_REFRESH_OVERLAP_MS = 24 * 60 * 60 * 1000;
 // Teto GLOBAL (não por cliente) -- 20 já causou throttling real da UpZero,
 // documentado em erp-attribution.ts. A fila abaixo junta (cliente,
 // customer) de TODOS os clientes antes de disparar qualquer worker, pra
@@ -1423,7 +1439,7 @@ export async function runPaidTouchpointsSync(
   const datasetByClient = new Map(datasetRows.map((row) => [row.id, row.bigqueryDataset]));
 
   const cutoff = new Date(Date.now() - PAID_TOUCHPOINTS_RECENT_ORDER_DAYS * 24 * 60 * 60 * 1000);
-  const from = new Date(Date.now() - PAID_TOUCHPOINTS_SYNC_WINDOW_DAYS * 24 * 60 * 60 * 1000).toISOString();
+  const globalFromMs = Date.now() - PAID_TOUCHPOINTS_SYNC_WINDOW_DAYS * 24 * 60 * 60 * 1000;
   const to = new Date().toISOString();
 
   const jobIdByClient = new Map<string, string>();
@@ -1456,12 +1472,57 @@ export async function runPaidTouchpointsSync(
     }
   }
 
+  // Achado 25/11/2026: antes pedia PAID_TOUCHPOINTS_SYNC_WINDOW_DAYS
+  // inteiro pra TODO mundo, toda rodada -- cliente já sincronizado ontem
+  // reconsultava o histórico todo de novo, do zero, só pra achar o mesmo
+  // 1 dia novo. Com a UpZero exigindo chamada picotada em até 24h (ver
+  // paid-touchpoints.ts), isso significava dezenas de chamadas
+  // desperdiçadas por cliente por rodada. Busca o synced_to de cada
+  // (cliente, customer) de uma vez e pede só o GAP -- igual
+  // getTouchpointsForCustomerCached já faz pro caminho ao vivo.
+  const syncStateRows = queue.length > 0
+    ? await db
+        .select({
+          clientId: paidTouchpointsSyncTable.clientId,
+          customerId: paidTouchpointsSyncTable.customerId,
+          syncedTo: paidTouchpointsSyncTable.syncedTo,
+        })
+        .from(paidTouchpointsSyncTable)
+        .where(
+          inArray(
+            paidTouchpointsSyncTable.customerId,
+            queue.map(({ customer }) => customer.id),
+          ),
+        )
+    : [];
+  const syncedToByKey = new Map(syncStateRows.map((row) => [`${row.clientId}:${row.customerId}`, row.syncedTo]));
+
+  // Achado 25/11/2026: com a janela de execução limitada a 3h-5h BRT (30min
+  // por rodada), nem sempre dá tempo de passar pela fila inteira -- sem
+  // isso, a MESMA ordem (sempre os primeiros clientes da lista) venceria a
+  // corrida toda rodada, e quem viesse depois nunca pegaria vez enquanto
+  // o atraso acumulado (hoje: 47 dias, desde que a UpZero mudou as regras
+  // em 09/10) não tivesse sido zerado pra todo mundo. Ordena do mais
+  // atrasado (nunca sincronizado primeiro) pro mais em dia, pra quem tá
+  // pior sempre ter prioridade enquanto o atraso ainda existir.
+  queue.sort((a, b) => {
+    const syncedToA = syncedToByKey.get(`${a.client.id}:${a.customer.id}`)?.getTime() ?? 0;
+    const syncedToB = syncedToByKey.get(`${b.client.id}:${b.customer.id}`)?.getTime() ?? 0;
+    return syncedToA - syncedToB;
+  });
+
   const statsByClient = new Map<string, { synced: number; failed: number }>();
   let nextIndex = 0;
   const worker = async () => {
     while (nextIndex < queue.length) {
       const { client, customer } = queue[nextIndex++];
       const stats = statsByClient.get(client.id) ?? { synced: 0, failed: 0 };
+      const existingSyncedTo = syncedToByKey.get(`${client.id}:${customer.id}`);
+      const from = new Date(
+        existingSyncedTo
+          ? Math.max(globalFromMs, existingSyncedTo.getTime() - PAID_TOUCHPOINTS_REFRESH_OVERLAP_MS)
+          : globalFromMs,
+      ).toISOString();
       try {
         await withTimeout(
           syncPaidTouchpointsForCustomer({
@@ -1499,8 +1560,15 @@ export async function runPaidTouchpointsSync(
       customersConsidered: stats.synced + stats.failed,
       ...stats,
     });
-    if (stats.failed > 0 && stats.synced === 0) failed++;
-    else done++;
+    if (stats.failed > 0 && stats.synced === 0) {
+      failed++;
+      // Achado 25/11/2026: essa rodada ficava "done" no sync_jobs mesmo com
+      // failed=N e synced=0 pra TODO cliente (nunca escrevia em
+      // sync_jobs.error) -- passou 7 semanas invisível assim. Loga aqui
+      // também pra aparecer no Cloud Logging sem precisar reconstruir o
+      // console.error de cada customer manualmente.
+      logger.error({ clientId, clientName: client?.name, stats }, "[extraction-runner] paid_touchpoints: nenhum customer sincronizou");
+    } else done++;
   }
 
   return {
