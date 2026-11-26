@@ -1,3 +1,4 @@
+import { ProductCampaignMonitor } from "@/components/product-campaign-monitor";
 import { usePreviousPeriodQuery } from "@/lib/previous-period-query";
 import { getGetMarketingUrl } from "@workspace/api-client-react";
 import { useDisplayLabel } from "@/lib/display-label";
@@ -731,23 +732,27 @@ export default function MarketingPage() {
 
   if (isError) {
     return (
-      <Alert variant="destructive" data-testid="page-marketing">
-        <AlertCircle className="h-4 w-4" />
-        <AlertTitle>{tx("Erro")}</AlertTitle>
-        <AlertDescription className="flex items-center justify-between">
-          {(error as { data?: { code?: string } })?.data?.code === "MEDIA_UNAVAILABLE"
-            ? tx("Investimento indisponível. Não foi possível ler a conta Meta; isso não significa gasto zero.")
-            : tx("Não foi possível carregar os anúncios.")}
-          <Button variant="outline" size="sm" onClick={() => refetch()}>
-            <RefreshCw className="mr-2 h-4 w-4" /> {tx("Tentar novamente")}
-          </Button>
-        </AlertDescription>
-      </Alert>
+      <div className="space-y-6" data-testid="page-marketing">
+        {isB2C && clientId && <ProductCampaignMonitor />}
+        <Alert variant="destructive">
+          <AlertCircle className="h-4 w-4" />
+          <AlertTitle>{tx("Erro")}</AlertTitle>
+          <AlertDescription className="flex items-center justify-between">
+            {(error as { data?: { code?: string } })?.data?.code === "MEDIA_UNAVAILABLE"
+              ? tx("Investimento indisponível. Não foi possível ler a conta Meta; isso não significa gasto zero.")
+              : tx("Não foi possível carregar os anúncios.")}
+            <Button variant="outline" size="sm" onClick={() => refetch()}>
+              <RefreshCw className="mr-2 h-4 w-4" /> {tx("Tentar novamente")}
+            </Button>
+          </AlertDescription>
+        </Alert>
+      </div>
     );
   }
 
   return (
     <div className="space-y-6" data-testid="page-marketing">
+      {isB2C && clientId && <ProductCampaignMonitor />}
       {/* Toolbar */}
       <motion.div initial="hidden" animate="visible" variants={fadeVariants} className="flex flex-wrap items-center justify-between gap-2">
         <div className="flex items-center gap-2 text-xs text-muted-foreground">

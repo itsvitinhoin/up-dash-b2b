@@ -57,6 +57,9 @@ interface MetaInsightRow {
   ad_name?: string;
   campaign_id?: string;
   campaign_name?: string;
+  adset_id?: string;
+  adset_name?: string;
+  objective?: string;
   status?: string;
   spend?: string;
   impressions?: string;
@@ -162,6 +165,11 @@ export interface MetaDailyPoint {
 export interface MetaAdMetric {
   id: string;
   name: string;
+  campaignId?: string;
+  campaignName?: string;
+  adsetId?: string;
+  adsetName?: string;
+  objective?: string;
   status?: string;
   spend: number;
   impressions: number;
@@ -375,6 +383,7 @@ async function fetchInsights(
   accessToken: string,
   adAccountId: string,
   params: Record<string, string>,
+  maxPages?: number,
 ): Promise<MetaInsightRow[]> {
   const rows: MetaInsightRow[] = [];
   let url: string | null = `${GRAPH_BASE}/${graphVersion()}/${normalizeMetaAdAccountId(adAccountId)}/insights?${new URLSearchParams({
@@ -382,7 +391,8 @@ async function fetchInsights(
     ...params,
   })}`;
 
-  while (url) {
+  for (let page = 0; url; page++) {
+    if (maxPages != null && page >= maxPages) throw new Error("Leitura diária da Meta excedeu a cobertura planejada.");
     const body: MetaGraphList<MetaInsightRow> = await fetchGraph(url, INSIGHTS_CACHE_TTL_MS);
     if (!Array.isArray(body.data)) throw new Error("O Meta retornou uma resposta de mídia incompleta.");
     rows.push(...body.data);
@@ -390,6 +400,14 @@ async function fetchInsights(
   }
 
   return rows;
+}
+
+export async function fetchManagerMetaAdDays(accessToken: string, accountId: string, since: string, until: string) {
+  const rows = await fetchInsights(accessToken, accountId, {
+    level: "ad", fields: "ad_id,ad_name,adset_id,adset_name,campaign_id,campaign_name,objective,spend,impressions,clicks,inline_link_clicks,actions,action_values,date_start,date_stop",
+    time_range: JSON.stringify({ since, until }), time_increment: "1", limit: "100",
+  }, 24);
+  return rows.map(row => adMetric(row, row.date_start, row.date_stop));
 }
 
 function dailyPoint(row: MetaInsightRow): MetaDailyPoint {
@@ -416,6 +434,11 @@ function adMetric(row: MetaInsightRow, since: string, until: string): MetaAdMetr
     id: row.ad_id ?? row.campaign_id ?? `${row.ad_name ?? row.campaign_name ?? "meta"}:${since}:${until}`,
     name: row.ad_name ?? row.campaign_name ?? "Meta ad",
     status: row.status,
+    campaignId: row.campaign_id,
+    campaignName: row.campaign_name,
+    adsetId: row.adset_id,
+    adsetName: row.adset_name,
+    objective: row.objective,
     spend,
     impressions: Math.round(numberValue(row.impressions)),
     clicks: Math.round(numberValue(row.inline_link_clicks ?? row.clicks)),
@@ -570,7 +593,7 @@ export class MediaReadError extends Error {
 }
 
 /** `includeMedia`: só a tela de Marketing (período atual) mostra miniaturas; métricas, comparativos e rotinas não precisam e não gastam chamadas de mídia. */
-type MetaParams = { accessToken: string; adAccountId: string; since: string; until: string; campaignName?: string; includeMedia?: boolean; isB2C?: boolean; includeReach?: boolean; summaryOnly?: boolean };
+type MetaParams = { accessToken: string; adAccountId: string; since: string; until: string; campaignName?: string; includeMedia?: boolean; isB2C?: boolean; includeReach?: boolean; summaryOnly?: boolean; refresh?: boolean };
 const mediaReads = new Map<string, { expiresAt: number; promise: Promise<MetaMarketingData> }>();
 const accountZones = new Map<string, { expiresAt: number; promise: Promise<string> }>();
 
@@ -593,7 +616,7 @@ export async function fetchMetaMarketingData(params: MetaParams): Promise<MetaMa
   const accountKey = `${normalizeMetaAdAccountId(params.adAccountId)}:${createHash("sha256").update(params.accessToken).digest("hex")}`;
   const key = JSON.stringify([accountKey, params.since, params.until, params.campaignName ?? "", params.includeMedia === true, params.isB2C === true, params.includeReach === true, params.summaryOnly === true]);
   const cached = mediaReads.get(key);
-  if (cached && cached.expiresAt > Date.now()) return cached.promise;
+  if (!params.refresh && cached && cached.expiresAt > Date.now()) return cached.promise;
   const promise = fetchMetaMarketingDataUncached(params, accountKey).catch((error: unknown) => {
     console.warn("[meta-read-failed]", JSON.stringify({account:normalizeMetaAdAccountId(params.adAccountId),status:error instanceof MetaGraphError ? error.status : undefined,code:error instanceof MetaGraphError ? error.code : undefined,reason:error instanceof MetaGraphError ? error.message : "Invalid or incomplete Meta metrics"}));
     throw new MediaReadError();
@@ -631,7 +654,7 @@ async function fetchMetaMarketingDataUncached(params: MetaParams, accountKey: st
     // "reduce the amount of data" errors; account days still feed the charts.
     const [accountDays, periodAds, statuses] = await Promise.all([
       fetchInsights(params.accessToken,params.adAccountId,{level:"account",fields:"spend,impressions,clicks,inline_link_clicks,actions,action_values,date_start,date_stop",time_range,time_increment:"1",limit:"100"}),
-      fetchInsights(params.accessToken,params.adAccountId,{level:"ad",fields:"ad_id,ad_name,campaign_id,campaign_name,spend,impressions,clicks,inline_link_clicks,actions,action_values,date_start,date_stop",time_range,limit:"100"}),
+      fetchInsights(params.accessToken,params.adAccountId,{level:"ad",fields:"ad_id,ad_name,adset_id,adset_name,campaign_id,campaign_name,objective,spend,impressions,clicks,inline_link_clicks,actions,action_values,date_start,date_stop",time_range,limit:"100"}),
       fetchCampaignStatuses(params.accessToken,params.adAccountId).catch(()=>new Map<string,string>()),
     ]);
     const grouped=aggregateMetaInsights(periodAds,params.since,params.until,"America/Sao_Paulo");

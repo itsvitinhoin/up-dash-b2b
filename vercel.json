@@ -5,7 +5,8 @@
   "outputDirectory": "artifacts/up-dash/dist/public",
   "functions": {
     "api/index.js": {
-      "maxDuration": 300
+      "maxDuration": 300,
+      "includeFiles": "node_modules/.pnpm/@sparticuz+chromium@*/node_modules/@sparticuz/chromium/bin/**"
     },
     "api/cron/extractions/bling.js": {
       "maxDuration": 290

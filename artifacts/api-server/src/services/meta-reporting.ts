@@ -87,6 +87,9 @@ export type AdditiveInsight = {
   ad_name?: string;
   campaign_id?: string;
   campaign_name?: string;
+  adset_id?: string;
+  adset_name?: string;
+  objective?: string;
   date_start: string;
   date_stop: string;
   spend?: string;
@@ -205,6 +208,8 @@ export function aggregateMetaInsights(
       ...row,
       ad_id: undefined,
       ad_name: undefined,
+      adset_id: undefined,
+      adset_name: undefined,
     })),
   };
 }

@@ -17,6 +17,9 @@ import { braavoRouter } from "./braavo";
 
 import { tvDashboardRouter } from "./tv-dashboard";
 
+import { productCampaignsRouter } from "./product-campaigns";
+import { upManagerRouter } from "./up-manager";
+
 const router: IRouter = Router();
 
 router.use(healthRouter);
@@ -28,6 +31,8 @@ router.use(braavoRouter);
 router.use(portfolioReportRouter);
 router.use(tvDashboardRouter);
 router.use(analyticsRouter);
+router.use(productCampaignsRouter);
+router.use(upManagerRouter);
 router.use(notificationsRouter);
 router.use(savedViewsRouter);
 router.use(extractionsRouter);

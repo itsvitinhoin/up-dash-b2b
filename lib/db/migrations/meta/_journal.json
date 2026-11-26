@@ -358,6 +358,41 @@
       "when": 1795530593922,
       "tag": "0050_bling",
       "breakpoints": true
+    },
+    {
+      "idx": 51,
+      "version": "7",
+      "when": 1795530593923,
+      "tag": "0051_up_manager",
+      "breakpoints": true
+    },
+    {
+      "idx": 52,
+      "version": "7",
+      "when": 1795530593924,
+      "tag": "0052_up_manager_b2c",
+      "breakpoints": true
+    },
+    {
+      "idx": 53,
+      "version": "7",
+      "when": 1795530593925,
+      "tag": "0053_up_manager_agent",
+      "breakpoints": true
+    },
+    {
+      "idx": 54,
+      "version": "7",
+      "when": 1795530593926,
+      "tag": "0054_up_manager_media_actions",
+      "breakpoints": true
+    },
+    {
+      "idx": 55,
+      "version": "7",
+      "when": 1795530593927,
+      "tag": "0055_up_manager_workflow",
+      "breakpoints": true
     }
   ]
 }
