@@ -32,6 +32,12 @@
       "maxDuration": 300
     }
   },
+  "crons": [
+    {
+      "path": "/api/cron/extractions/google-ads",
+      "schedule": "37 9 * * *"
+    }
+  ],
   "rewrites": [
     {
       "source": "/api/(.*)",

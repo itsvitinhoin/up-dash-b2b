@@ -37,6 +37,20 @@ export const architectureRoutes = [
     legacy: "/marketing",
   },
   {
+    path: "/performance/anuncios/meta-ads",
+    page: "ads",
+    group: "Desempenho",
+    title: "Anúncios",
+    legacy: "/marketing",
+  },
+  {
+    path: "/performance/anuncios/google-ads",
+    page: "google-ads",
+    group: "Desempenho",
+    title: "Anúncios",
+    legacy: "/marketing",
+  },
+  {
     path: "/performance/jornada",
     page: "attribution",
     group: "Desempenho",
@@ -129,6 +143,8 @@ export function navigationPath(path: string): string {
     "/rfm": "/ecommerce/inteligencia-clientes",
     "/funnel": "/performance/funil",
     "/marketing": "/performance/anuncios",
+    "/performance/anuncios/meta-ads": "/performance/anuncios",
+    "/performance/anuncios/google-ads": "/performance/anuncios",
     "/journey": "/performance/jornada",
     "/utm": "/performance/jornada",
   };

@@ -827,6 +827,9 @@ export function AppLayout({ children }: AppLayoutProps) {
     ? {
         ...inheritedMeta,
         title: selectedDashboardMode === "B2C" && architecture.title === "Cadastros" ? "Clientes" : architecture.title,
+        ...(architecture.page === "google-ads"
+          ? { hasFilterBar: false, subtitle: "Campanhas, investimento e conversões do Google Ads" }
+          : {}),
         ...(architecture.page === "monthly-history"
           ? { hasDateRange: false, subtitle: "Métricas consolidadas por mês" }
           : {}),
