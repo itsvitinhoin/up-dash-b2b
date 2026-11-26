@@ -297,6 +297,35 @@ function isSkuConflict(error: unknown, depth = 0): boolean {
   return isSkuConflict(e.cause, depth + 1);
 }
 
+// Achado 23/11/2026: mesma familia de bug do SKU, so que do lado do cliente --
+// o upsert de pedido resolve conflito por EMAIL mas tambem escreve external_id
+// (id do cliente na Nuvemshop). Pedido de convidado (sem customer.id, ganha um
+// external_id sintetico) que depois vira conta de verdade com o MESMO e-mail
+// de outro pedido (ou o contrario) faz dois e-mails deferentes quererem o
+// mesmo external_id -- ai bate em customers_client_external_id_uq. external_id
+// e o link de verdade pra Nuvemshop (ao contrario do SKU, que e so exibicao),
+// entao aqui a saida segura e NAO sobrescrever o external_id de quem ja
+// tinha um -- so atualiza quando o e-mail e novo ou ja era dono desse id.
+type CustomerIdentity = { id: string; externalId: string | null };
+type CustomerIndex = {
+  byEmail: Map<string, CustomerIdentity>;
+  // external_id -> e-mail de quem o usa (null = linha antiga sem external_id, nunca colide).
+  byExternalId: Map<string, string>;
+};
+
+async function loadCustomerIndex(clientId: string): Promise<CustomerIndex> {
+  const rows = await db
+    .select({ id: customersTable.id, email: customersTable.email, externalId: customersTable.externalId })
+    .from(customersTable)
+    .where(eq(customersTable.clientId, clientId));
+  const index: CustomerIndex = { byEmail: new Map(), byExternalId: new Map() };
+  for (const row of rows) {
+    index.byEmail.set(row.email, { id: row.id, externalId: row.externalId });
+    if (row.externalId) index.byExternalId.set(row.externalId, row.email);
+  }
+  return index;
+}
+
 async function upsertItemProduct(
   clientId: string,
   index: ProductIndex,
@@ -493,6 +522,17 @@ async function fetchOrderRefundedAmount(
   }
 }
 
+// Achado 23/11/2026 (backfill da Jini, ~17 mil pedidos/ano): a Nuvemshop
+// pagina por NUMERO DE PAGINA, nao por cursor. Pedir "desde X" sem teto
+// superior faz o servidor deles paginar por TODO o historico mais recente
+// ate achar X -- numa loja com muito pedido, isso cai em "Internal Server
+// Error" a partir de uma certa profundidade (testado: 45/70 dias OK, 95/150
+// dias quebra). updated_at_max existe e funciona (confirmado ao vivo), entao
+// fatiar em pedacos de tempo menores evita que qualquer busca precise descer
+// fundo o bastante pra travar -- sem isso, nunca mais tentar um backfill
+// largo numa loja grande sem cair no mesmo problema.
+const NUVEMSHOP_ORDERS_CHUNK_DAYS = 30;
+
 async function fetchOrders(
   storeId: string,
   accessToken: string,
@@ -502,24 +542,54 @@ async function fetchOrders(
   rows: NuvemshopOrder[];
   pagesFetched: number;
   complete: boolean;
+  chunkErrors: string[];
 }> {
   const orders: NuvemshopOrder[] = [];
   let pagesFetched = 0;
-  let complete = false;
-  for (let page = 1; !maxPages || page <= maxPages; page++) {
-    const rows = await fetchNuvemshopPage<NuvemshopOrder>(storeId, accessToken, "/orders", {
-      page,
-      per_page: 200,
-      ...(since ? { updated_at_min: since.toISOString() } : {}),
-    });
-    pagesFetched++;
-    orders.push(...rows);
-    if (rows.length < 200) {
-      complete = true;
-      break;
+  let complete = true;
+  const chunkErrors: string[] = [];
+  const stopAt = since ?? new Date(0);
+  let chunkEnd = new Date();
+
+  while (chunkEnd > stopAt) {
+    const chunkStart = new Date(Math.max(
+      chunkEnd.getTime() - NUVEMSHOP_ORDERS_CHUNK_DAYS * 24 * 60 * 60 * 1000,
+      stopAt.getTime(),
+    ));
+    let chunkRows = 0;
+    try {
+      for (let page = 1; !maxPages || page <= maxPages; page++) {
+        const rows = await fetchNuvemshopPage<NuvemshopOrder>(storeId, accessToken, "/orders", {
+          page,
+          per_page: 200,
+          updated_at_min: chunkStart.toISOString(),
+          updated_at_max: chunkEnd.toISOString(),
+        });
+        pagesFetched++;
+        orders.push(...rows);
+        chunkRows += rows.length;
+        if (rows.length < 200) break;
+        if (maxPages && page >= maxPages) complete = false;
+      }
+    } catch (error) {
+      // Achado 23/11/2026: um pedaco de tempo pode falhar sozinho (ex: erro
+      // pontual da Nuvemshop numa janela especifica, mesmo com o pedaco ja
+      // pequeno) -- registra e segue pro pedaco mais antigo, em vez de jogar
+      // fora os pedidos que os OUTROS pedacos ja buscaram com sucesso (antes,
+      // uma falha em qualquer pedaco descartava a busca inteira).
+      chunkErrors.push(
+        `${chunkStart.toISOString().slice(0, 10)} a ${chunkEnd.toISOString().slice(0, 10)}: ${error instanceof Error ? error.message : String(error)}`,
+      );
+      complete = false;
+      chunkEnd = chunkStart;
+      continue;
     }
+    // Sem `since` (historico completo): pedaco sem nenhum pedido = ja passou
+    // do inicio real da loja, nao precisa continuar descendo.
+    if (!since && chunkRows === 0) break;
+    chunkEnd = chunkStart;
   }
-  return { rows: orders, pagesFetched, complete };
+  return { rows: orders, pagesFetched, complete, chunkErrors };
 }
 
 async function fetchProducts(
@@ -567,6 +637,14 @@ async function syncProductCatalog(params: {
     );
   }
 
+  // Achado 23/11/2026 (reativando o catalogo apos SKIP_CATALOG=1 ficar meses ligado):
+  // mesmo SKU repetido entre produtos diferentes (Hot Pink/Lila Rosa/Jini, ver
+  // investigacao 2026-09-17 abaixo) que upsertItemProduct ja sabe contornar --
+  // esse loop so tinha o try/catch simples, sem a logica de SKU seguro, entao a
+  // variante que perdia a corrida ficava presa com dado velho pra sempre. Mesmo
+  // indice/funcoes que upsertItemProduct usa (ProductIndex/collisionSku/isSkuConflict).
+  const productIndex = await loadProductIndex(params.clientId);
+
   for (const product of products) {
     try {
       const productId = product.id ? String(product.id) : null;
@@ -603,13 +681,27 @@ async function syncProductCatalog(params: {
       }
 
       for (const [sku, row] of variantsBySku.entries()) {
-        try {
-          const [upserted] = await db
+        // externalId (product_id:variant_id da Nuvemshop) e o identificador
+        // estavel -- o sku pode ser reatribuido pelo lojista ao longo do
+        // tempo. Resolver conflito por sku deixava o upsert tentar um INSERT
+        // puro quando o sku mudava, colidindo na constraint de externalId em
+        // vez de atualizar a linha certa. Mesmo assim, alguns catalogos tem
+        // sku duplicado entre produtos diferentes de verdade (ver
+        // investigacao 2026-09-17) -- por isso o SKU seguro/retry abaixo,
+        // igual upsertItemProduct ja faz pro lado do pedido.
+        const own = productIndex.byExternalId.get(row.externalId);
+        const owner = productIndex.externalIdBySku.get(sku);
+        const takenByOther = owner !== undefined && owner !== row.externalId;
+        const safeSku = own ? own.sku : collisionSku(sku, row.externalId);
+        const wanted = takenByOther ? safeSku : sku;
+
+        const write = async (skuToUse: string) => {
+          const [row_] = await db
             .insert(productsTable)
             .values({
               clientId: params.clientId,
               externalId: row.externalId,
-              sku,
+              sku: skuToUse,
               name: row.name,
               category,
               price: row.price,
@@ -618,18 +710,9 @@ async function syncProductCatalog(params: {
               status: "ACTIVE",
             })
             .onConflictDoUpdate({
-              // externalId (product_id:variant_id da Nuvemshop) e o identificador
-              // estavel -- o sku pode ser reatribuido pelo lojista ao longo do
-              // tempo. Resolver conflito por sku deixava o upsert tentar um INSERT
-              // puro quando o sku mudava, colidindo na constraint de externalId
-              // em vez de atualizar a linha certa. Mesmo assim, alguns catalogos
-              // tem sku duplicado entre produtos diferentes de verdade -- por
-              // isso o try/catch: uma variante com dado inconsistente nao pode
-              // abortar as outras variantes do mesmo produto (ver investigacao
-              // 2026-09-17).
               target: [productsTable.clientId, productsTable.externalId],
               set: {
-                sku,
+                sku: skuToUse,
                 name: row.name,
                 category,
                 price: row.price,
@@ -638,9 +721,27 @@ async function syncProductCatalog(params: {
                 status: "ACTIVE",
               },
             })
-            .returning({ wasInserted: sql<boolean>`(xmax = 0)` });
+            .returning({ id: productsTable.id, wasInserted: sql<boolean>`(xmax = 0)` });
+          return row_;
+        };
+
+        let used = wanted;
+        try {
+          let upserted;
+          try {
+            upserted = await write(wanted);
+          } catch (variantError) {
+            if (!isSkuConflict(variantError) || safeSku === wanted) throw variantError;
+            used = safeSku;
+            upserted = await write(safeSku);
+          }
           if (upserted?.wasInserted) params.result.productsCreated++;
           else params.result.productsUpdated++;
+          if (upserted) {
+            if (own && own.sku !== used && productIndex.externalIdBySku.get(own.sku) === row.externalId) productIndex.externalIdBySku.delete(own.sku);
+            productIndex.externalIdBySku.set(used, row.externalId);
+            productIndex.byExternalId.set(row.externalId, { id: upserted.id, sku: used });
+          }
         } catch (variantError) {
           params.result.errors.push(
             `Product ${product.id ?? "unknown"} variant ${sku}: ${variantError instanceof Error ? variantError.message : String(variantError)}`,
@@ -683,7 +784,11 @@ export async function syncNuvemshopClient(params: {
     result.ordersFetched = orders.length;
     result.orderPagesFetched = orderPage.pagesFetched;
     result.orderPaginationComplete = orderPage.complete;
-    if (!orderPage.complete) {
+    if (orderPage.chunkErrors.length > 0) {
+      for (const chunkError of orderPage.chunkErrors) {
+        result.errors.push(`Orders (pedaco ${chunkError}) -- pedidos de outros pedacos foram processados normalmente.`);
+      }
+    } else if (!orderPage.complete) {
       result.errors.push(
         `Orders pagination stopped after ${orderPage.pagesFetched} page(s) before reaching the end. Increase NUVEMSHOP_CRON_MAX_PAGES or remove the cap.`,
       );
@@ -694,6 +799,7 @@ export async function syncNuvemshopClient(params: {
   }
   const productDetailsCache = new Map<string, Promise<NuvemshopProductDetails | null>>();
   let productIndex: ProductIndex | undefined;
+  const customerIndex = await loadCustomerIndex(params.clientId);
 
   for (const order of orders) {
     try {
@@ -733,11 +839,24 @@ export async function syncNuvemshopClient(params: {
       const city = order.shipping_address?.city ?? order.billing_city ?? null;
       const state = normalizeState(order.shipping_address?.province ?? order.billing_province);
 
+      // Achado 23/11/2026: ver comentario de CustomerIndex acima -- so escreve
+      // um external_id que nenhum OUTRO e-mail ja tem (checa antes de escrever;
+      // loop sequencial, sem concorrencia dentro da mesma rodada, entao nao
+      // precisa do retry reativo que upsertItemProduct usa pro SKU).
+      const desiredExternalId = customer.id ? String(customer.id) : null;
+      const own = customerIndex.byEmail.get(email);
+      const ownerEmail = desiredExternalId ? customerIndex.byExternalId.get(desiredExternalId) : undefined;
+      const takenByOther = ownerEmail !== undefined && ownerEmail !== email;
+      const externalIdForInsert = desiredExternalId
+        ? (takenByOther ? null : desiredExternalId)
+        : `order-customer-${externalOrderId}`;
+      const externalIdForUpdate = desiredExternalId && !takenByOther ? desiredExternalId : undefined;
+
       const [upsertedCustomer] = await db
         .insert(customersTable)
         .values({
           clientId: params.clientId,
-          externalId: customer.id ? String(customer.id) : `order-customer-${externalOrderId}`,
+          externalId: externalIdForInsert,
           email,
           name,
           phone,
@@ -750,7 +869,7 @@ export async function syncNuvemshopClient(params: {
         .onConflictDoUpdate({
           target: [customersTable.clientId, customersTable.email],
           set: {
-            externalId: customer.id ? String(customer.id) : undefined,
+            externalId: externalIdForUpdate,
             name,
             phone,
             city,
@@ -763,6 +882,15 @@ export async function syncNuvemshopClient(params: {
       if (!upsertedCustomer) continue;
       if (upsertedCustomer.wasInserted) result.customersCreated++;
       else result.customersUpdated++;
+
+      const finalExternalId = upsertedCustomer.wasInserted
+        ? externalIdForInsert
+        : (externalIdForUpdate ?? own?.externalId ?? null);
+      if (own?.externalId && own.externalId !== finalExternalId && customerIndex.byExternalId.get(own.externalId) === email) {
+        customerIndex.byExternalId.delete(own.externalId);
+      }
+      customerIndex.byEmail.set(email, { id: upsertedCustomer.id, externalId: finalExternalId });
+      if (finalExternalId) customerIndex.byExternalId.set(finalExternalId, email);
 
       const [upsertedOrder] = await db
         .insert(ordersTable)
