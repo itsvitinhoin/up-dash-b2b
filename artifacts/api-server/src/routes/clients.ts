@@ -367,14 +367,34 @@ router.get("/clients", requireAdmin, async (req, res): Promise<void> => {
     };
   });
 
-  res.json(
-    ListClientsResponse.parse({
-      data: enrichedWithAccess,
-      total: count,
-      page,
-      pages: Math.max(1, Math.ceil(count / limit)),
-    }),
-  );
+  // Achado 27/11/2026: /clients com limit alto (ex: 1000) às vezes 500
+  // genérico sem pista nenhuma -- se for um registro específico que não bate
+  // com o schema de resposta (ZodError), sem log nunca dava pra saber qual.
+  // Loga aqui o issue exato (path/mensagem) + qual cliente (id/nome) pra achar
+  // de primeira da próxima vez que falhar, em vez de adivinhar campo por campo.
+  try {
+    res.json(
+      ListClientsResponse.parse({
+        data: enrichedWithAccess,
+        total: count,
+        page,
+        pages: Math.max(1, Math.ceil(count / limit)),
+      }),
+    );
+  } catch (err) {
+    if (err instanceof z.ZodError) {
+      const firstIssue = err.issues[0];
+      const badIndex = typeof firstIssue?.path[1] === "number" ? firstIssue.path[1] : null;
+      const badClient = badIndex !== null ? enrichedWithAccess[badIndex] : null;
+      logger.error(
+        { issues: err.issues, badClientId: badClient?.id, badClientName: badClient?.name },
+        "[clients] ListClientsResponse.parse falhou",
+      );
+    } else {
+      logger.error({ err }, "[clients] erro inesperado montando resposta de /clients");
+    }
+    res.status(500).json({ error: true, code: "INTERNAL_ERROR", message: "Internal server error. Please try again or contact support.", status: 500 });
+  }
 });
 
 const CURRENCY_RE = /^[A-Z]{3}$/;
