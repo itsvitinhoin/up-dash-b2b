@@ -29,6 +29,7 @@ import {
   analyzeManagerWithOpenAI,
   draftManagerClientUpdates,
   managerAgentConfigured,
+  type ReadyManagerAnalysis,
 } from "./up-manager-agent";
 import { archiveManagerReports } from "./up-manager-brain";
 import {
@@ -238,6 +239,7 @@ export async function saveManagerReport(
     eq(reports.dateTo, key.dateTo),
   );
 
+  let previousAgent: ReadyManagerAnalysis | null = null;
   if (scheduled && !refresh) {
     const [existing] = await db
       .select({
@@ -245,6 +247,7 @@ export async function saveManagerReport(
         ga4: sql<(string | null)[] | null>`${reports.payload}#>'{b2c,coverage,ga4Fingerprint}'`,
         dpaStatus: sql<string | null>`${reports.payload}#>>'{b2c,product,dpa,status}'`,
         agentStatus: sql<string | null>`${reports.payload}#>>'{agent,status}'`,
+        agent: sql<ReadyManagerAnalysis | null>`${reports.payload}->'agent'`,
         complete: sql<boolean>`COALESCE(${reports.payload}->>'trigger' = 'scheduled' AND ${reports.payload}#>>'{b2c,scope,commerceConfirmed}' = 'true'
           AND ${reports.payload}#>>'{b2c,version}' = ${B2C_VERSION}
           AND (NOT ${agentConfigured} OR ${reports.payload}#>>'{agent,status}' = 'ready'), false)`,
@@ -252,6 +255,7 @@ export async function saveManagerReport(
       .from(reports)
       .where(byKey);
     if (existing?.complete) {
+      previousAgent = existing.agent;
       const ref = { dateFrom: addDaysToDateOnly(period.dateFrom, -7), dateTo: addDaysToDateOnly(period.dateTo, -7) };
       const [commerce, ga] = await Promise.all([
         readCommerceFreshness(client.id, client.commercePlatform).catch(() => null),
@@ -306,8 +310,11 @@ export async function saveManagerReport(
       })) ?? [];
   const sectorMemory = buildManagerSectorMemory(result, analysisDay, previousDaily?.payload);
   const checkoutVariant = report.cro.evaluation.checkoutDiagnosis?.targetVariantId;
+  const shouldGenerate = !scheduled || report.scope.commerceConfirmed;
   const [agent, tested] = await Promise.all([
-    analyzeManagerWithOpenAI(result, findings, tracked ?? [], sectorMemory, learned),
+    shouldGenerate
+      ? analyzeManagerWithOpenAI(result, findings, tracked ?? [], sectorMemory, learned, previousAgent)
+      : { status: "waiting_for_orders" as const },
     checkoutVariant ? db.select({
       test: sql<Record<string, unknown>>`${archive.payload}->'checkoutTest'`,
     }).from(archive).where(and(
@@ -316,7 +323,7 @@ export async function saveManagerReport(
       eq(archive.dateTo, period.dateTo),
       sql`${archive.payload}#>>'{checkoutTest,result,shipping,variantId}' = ${checkoutVariant}`,
     )).orderBy(desc(archive.createdAt)).limit(1) : [],
-    draftManagerClientUpdates(result, findings),
+    draftManagerClientUpdates(result, findings, { allowGeneration: shouldGenerate }),
   ]);
   const runId = randomUUID();
   const payload = {

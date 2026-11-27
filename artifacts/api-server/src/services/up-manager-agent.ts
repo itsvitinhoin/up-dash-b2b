@@ -1,3 +1,5 @@
+import { createHash } from "node:crypto";
+import { saoPauloDateOnly } from "../lib/reporting-period";
 import type { buildManagerSectorMemory } from "./up-manager-sector-memory";
 import OpenAI from "openai";
 import { z } from "zod";
@@ -75,6 +77,56 @@ type Finding = B2cFinding;
 type Evidence = { id: string; label: string; value: unknown; display: string };
 type Proposal = { id: string; title: string; problem: string; evidence: { id: string; label: string; value: string }[];
   urgency: "next"; focus: NonNullable<Finding["focus"]>; action: string; owner: string; verification: string };
+
+type ManagerInsight = Omit<Proposal, "urgency" | "focus"> & {
+  urgency: "now" | "next";
+  focus?: Finding["focus"];
+  grade?: Finding["grade"];
+  diagnosis?: Finding["diagnosis"];
+};
+
+export type ReadyManagerAnalysis = {
+  status: "ready";
+  model: string;
+  summary: string;
+  insights: ManagerInsight[];
+  createdAt: string;
+  inputCoverage: { included: number; total: number };
+  inputFingerprint: string;
+  reused?: boolean;
+  usage?: { inputTokens: number; cachedInputTokens: number; outputTokens: number };
+};
+
+const observationTimes = new Set([
+  "observedAt", "checkedAt", "stockObservedAt", "couponsObservedAt", "monitorObservedAt",
+  "previousObservedAt", "currentObservedAt", "previousCouponObservedAt", "currentCouponObservedAt",
+]);
+const assetFields = new Set(["imageUrl", "thumbnailUrl", "previewUrl", "videoUrl"]);
+
+function managerPromptField(key: string, value: unknown) {
+  if (assetFields.has(key)) return undefined;
+  // Preserve the date of the observation, without treating a re-read at a new time as new evidence.
+  if (observationTimes.has(key) && typeof value === "string" && value.length > 10) {
+    const date = new Date(value);
+    if (Number.isFinite(date.getTime())) return saoPauloDateOnly(date);
+  }
+  return value;
+}
+
+export function serializeManagerEvidence(value: unknown) {
+  return JSON.stringify(value, managerPromptField);
+}
+
+export function managerAnalysisFingerprint(model: string, input: string) {
+  return createHash("sha256").update(JSON.stringify({ model, reasoning, instructions, outputFormat, input })).digest("hex");
+}
+
+export function reuseManagerAnalysis(existing: ReadyManagerAnalysis | null | undefined, inputFingerprint: string) {
+  if (existing?.status !== "ready" || existing.inputFingerprint !== inputFingerprint) return null;
+  // The reused result has no new provider usage to charge to this run.
+  const { usage: _previousUsage, ...analysis } = existing;
+  return { ...analysis, reused: true };
+}
 
 const mediaEvidenceId = (row: B2cResult["report"]["media"]["roasReview"]["rows"][number]) => `media:entity:${row.level}:${row.id}`;
 const present = (value: number | null) => value === null ? "—" : `${value.toFixed(2).replace(".", ",")}×`;
@@ -238,11 +290,16 @@ function evidenceFor(result: B2cResult, findings: Finding[]) {
     {
       id: "media:four-windows",
       label: "Campanhas em 30, 14, 7 e 3 dias",
-      value: report.media.roasReview.rows.filter((row) => row.level === "campaign" && row.evaluation).slice(0, 16)
-        .map(({ name, evaluation }) => ({ name, decision: evaluation!.decision, windows: evaluation!.windows,
-          inventory: { coverageDays: evaluation!.inventory.coverageDays, gradeDays: evaluation!.inventory.gradeDays,
-            scaleReady: evaluation!.inventory.scaleReady, products: evaluation!.inventory.products.slice(0, 3) },
-          reason: evaluation!.reason, diagnosis: evaluation!.diagnosis, watch: evaluation!.watch, auction: evaluation!.auction })),
+      value: {
+        reference: report.media.roasReview.reference,
+        window: report.media.roasReview.window,
+        campaigns: report.media.roasReview.rows.filter(({ level, evaluation }) => level === "campaign" && evaluation)
+          .slice(0, 16).map(({ name, evaluation }) => ({
+            name, decision: evaluation!.decision,
+            roas: evaluation!.windows.map(({ days, roas }) => ({ days, roas })),
+            summary: evaluation!.diagnosis?.summary ?? evaluation!.reason,
+          })),
+      },
       display: "Compara ROAS, CPA, compras, destino de mídia, grade e cobertura projetada com giro de 7 e 14 dias.",
     },
     {
@@ -332,7 +389,10 @@ function evidenceFor(result: B2cResult, findings: Finding[]) {
       .map((row) => ({ id: mediaEvidenceId(row), label: row.name,
         value: { level: row.level, decision: row.recommendation, windows: row.evaluation!.windows, reason: row.driver,
           diagnosis: row.evaluation!.diagnosis?.summary, validation: row.evaluation!.diagnosis?.followUp,
-          auction: row.evaluation!.auction, destination: row.evaluation!.destinations, inventory: row.evaluation!.inventory.products.slice(0, 3) },
+          auction: row.evaluation!.auction, destination: row.evaluation!.destinations, inventory: row.evaluation!.inventory.products.slice(0, 3)
+            .map(({ id, name, grade, stock, coverageDays, gradeDays, firstSizeAtRisk, missing }) => ({
+              id, name, grade, stock, coverageDays, gradeDays, firstSizeAtRisk, missing: missing.slice(0, 8),
+            })) },
         display: `${row.driver} ROAS 7d ${present(row.evaluation!.windows.find(({ days }) => days === 7)?.roas ?? null)}.` })),
     availableExtras,
     campaignEvidence,
@@ -344,7 +404,7 @@ function evidenceFor(result: B2cResult, findings: Finding[]) {
   let chars = 0;
   for (const [index, group] of groups.entries()) {
     for (const item of group.slice(0, limits[index])) {
-      const length = JSON.stringify(item).length;
+      const length = serializeManagerEvidence(item).length;
       if (chars + length > 100_000) break;
       chars += length;
       records.push(item);
@@ -356,12 +416,15 @@ function evidenceFor(result: B2cResult, findings: Finding[]) {
   };
 }
 
-export async function draftManagerClientUpdates(result: B2cResult, findings: Finding[]) {
+export async function draftManagerClientUpdates(
+  result: B2cResult, findings: Finding[], { allowGeneration = true } = {},
+) {
   const selected = findings.filter(({ grade, id, priority }) => !grade && (priority !== "P2" || id === "shipping-price-and-delivery")).sort((a, b) => Number(b.id === "shipping-price-and-delivery") - Number(a.id === "shipping-price-and-delivery")).slice(0, 12);
   for (const item of selected) item.clientDraft ??= `Olá! ${item.evidence} Nossa proposta é ${item.action}`;
+  const model = process.env.UP_MANAGER_COPY_MODEL?.trim();
+  if (!allowGeneration || !model || !selected.length) return;
   const client = managerOpenAI();
-  if (!client || !selected.length) return;
-  const model = process.env.UP_MANAGER_COPY_MODEL?.trim() || "gpt-4.1-mini";
+  if (!client) return;
   try {
     const response = await client.responses.create({
       model, store: false, max_output_tokens: 2_400,
@@ -402,12 +465,50 @@ export async function analyzeManagerWithOpenAI(
   tracked: { plan: { title: string; metric: string; target: number }; result: unknown }[] = [],
   sectorMemory?: ReturnType<typeof buildManagerSectorMemory>,
   learned: { day: string; subject: string; change: string; outcome: string }[] = [],
+  existing?: ReadyManagerAnalysis | null,
 ) {
   const client = managerOpenAI();
   const model = process.env.UP_MANAGER_OPENAI_MODEL?.trim() || DEFAULT_MODEL;
   if (!client) return { status: "unconfigured" as const };
+  let usage: ReadyManagerAnalysis["usage"];
   try {
     const { records, recordCount } = evidenceFor(result, findings);
+    const input = serializeManagerEvidence({
+      periodo: result.report.scope,
+      marca: result.report.clientName,
+      currency: result.report.currency,
+      benchmarkB2c: result.report.media.roasReview.agencyBenchmark,
+      leilaoESazonalidadeDaMarca: result.report.media.roasReview.auctionSeasonality,
+      cobertura: result.report.coverage,
+      fechamentoComercialConfirmado: result.report.scope.commerceConfirmed,
+      planoSemanal: result.report.weeklyPlan,
+      sinaisPorFrente: sectorMemory?.measures.filter(({ direction }) => direction === "improved" || direction === "worsened").slice(0, 25),
+      históricoComResultado: learned.slice(0, 24),
+      mudançasObservadas: sectorMemory?.events.slice(0, 12),
+      mudançasVinculadasACampanhas: sectorMemory?.campaignImpacts.slice(0, 16),
+      acompanhamento: tracked.filter(({ result }) => result).slice(0, 12)
+        .map(({ plan, result }) => ({ decisão: plan.title, indicador: plan.metric, meta: plan.target, resultado: result })),
+      limitações: result.report.limitations,
+      itensEnviados: records.length,
+      itensTotais: recordCount,
+      evidencias: records,
+      avisosDeGrade: findings.filter(({ grade }) => grade).length,
+      decisõesConfirmadas: findings
+        .filter(({ grade }) => !grade)
+        .slice(0, 65)
+        .map(({ id, title, focus, priority, evidence, action, diagnosis }) => ({
+          id,
+          title,
+          focus,
+          priority,
+          evidence,
+          action,
+          diagnosis,
+        })),
+    });
+    const inputFingerprint = managerAnalysisFingerprint(model, input);
+    const reused = reuseManagerAnalysis(existing, inputFingerprint);
+    if (reused) return reused;
     const response = await client.responses.create(
       {
         model,
@@ -415,39 +516,7 @@ export async function analyzeManagerWithOpenAI(
         reasoning: { effort: reasoning },
         max_output_tokens: 14_000,
         instructions,
-        input: JSON.stringify({
-          periodo: result.report.scope,
-          marca: result.report.clientName,
-          currency: result.report.currency,
-          benchmarkB2c: result.report.media.roasReview.agencyBenchmark,
-          leilaoESazonalidadeDaMarca: result.report.media.roasReview.auctionSeasonality,
-          cobertura: result.report.coverage,
-          fechamentoComercialConfirmado: result.report.scope.commerceConfirmed,
-          planoSemanal: result.report.weeklyPlan,
-          sinaisPorFrente: sectorMemory?.measures.filter(({ direction }) => direction === "improved" || direction === "worsened").slice(0, 25),
-          históricoComResultado: learned.slice(0, 24),
-          mudançasObservadas: sectorMemory?.events.slice(0, 12),
-          mudançasVinculadasACampanhas: sectorMemory?.campaignImpacts.slice(0, 16),
-          acompanhamento: tracked.filter(({ result }) => result).slice(0, 12)
-            .map(({ plan, result }) => ({ decisão: plan.title, indicador: plan.metric, meta: plan.target, resultado: result })),
-          limitações: result.report.limitations,
-          itensEnviados: records.length,
-          itensTotais: recordCount,
-          evidencias: records,
-          avisosDeGrade: findings.filter(({ grade }) => grade).length,
-          decisõesConfirmadas: findings
-            .filter(({ grade }) => !grade)
-            .slice(0, 65)
-            .map(({ id, title, focus, priority, evidence, action, diagnosis }) => ({
-              id,
-              title,
-              focus,
-              priority,
-              evidence,
-              action,
-              diagnosis,
-            })),
-        }),
+        input,
         text: { format: outputFormat },
       },
       { timeout: 105_000, maxRetries: 0 },
@@ -463,16 +532,22 @@ export async function analyzeManagerWithOpenAI(
             : [],
         )
         .join("");
+    usage = response.usage ? {
+      inputTokens: response.usage.input_tokens,
+      cachedInputTokens: response.usage.input_tokens_details?.cached_tokens ?? 0,
+      outputTokens: response.usage.output_tokens,
+    } : undefined;
     if (!raw || response.status === "incomplete") {
       logger.warn(
         {
           model,
           responseStatus: response.status,
+          usage,
           reason: response.incomplete_details?.reason ?? "missing_output",
         },
         "[up-manager] resposta OpenAI sem análise completa",
       );
-      return { status: "unavailable" as const, model };
+      return { status: "unavailable" as const, model, usage };
     }
     const parsed = outputSchema.parse(JSON.parse(raw));
     const byId = new Map(records.map((item) => [item.id, item]));
@@ -525,7 +600,7 @@ export async function analyzeManagerWithOpenAI(
         { model },
         "[up-manager] nenhuma recomendação trouxe referências verificáveis",
       );
-      return { status: "unavailable" as const, model };
+      return { status: "unavailable" as const, model, usage };
     }
     return {
       status: "ready" as const,
@@ -534,7 +609,9 @@ export async function analyzeManagerWithOpenAI(
       insights: analysis,
       createdAt: new Date().toISOString(),
       inputCoverage: { included: records.length, total: recordCount },
-    };
+      inputFingerprint,
+      usage,
+    } satisfies ReadyManagerAnalysis;
   } catch (err) {
     logger.warn(
       {
@@ -548,6 +625,6 @@ export async function analyzeManagerWithOpenAI(
       },
       "[up-manager] análise OpenAI indisponível",
     );
-    return { status: "unavailable" as const, model };
+    return { status: "unavailable" as const, model, usage };
   }
 }
