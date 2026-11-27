@@ -1,6 +1,6 @@
 import { funnelFingerprint, hasClosedOrders, reopenedSources } from "./up-manager-source-readiness";
 import { readCommerceFreshness, readFunnel } from "./up-manager-b2c-data";
-import { managerClientIds } from "./up-manager-config";
+import { managerClientIds, managerScheduledAnalysisMode } from "./up-manager-config";
 import { analyzeProductCampaigns } from "./product-campaign-analysis";
 import { fetchCampaignAds } from "./product-campaign-sources";
 import { readManagerAuditTrail, readManagerLongTermLessons } from "./up-manager-memory";
@@ -29,6 +29,7 @@ import {
   analyzeManagerWithOpenAI,
   draftManagerClientUpdates,
   managerAgentConfigured,
+  managerScheduledModel,
   type ReadyManagerAnalysis,
 } from "./up-manager-agent";
 import { archiveManagerReports } from "./up-manager-brain";
@@ -218,14 +219,18 @@ export async function saveManagerReport(
     trigger?: "manual" | "scheduled";
     now?: Date;
     refresh?: boolean;
+    analysisMode?: ReturnType<typeof managerScheduledAnalysisMode>;
   } = {},
 ) {
   const now = options.now ?? new Date();
   const analysisDay = saoPauloDateOnly(now);
   const trigger = options.trigger ?? "manual";
   const scheduled = trigger === "scheduled";
+  const analysisMode = scheduled ? options.analysisMode : undefined;
+  const rulesOnly = analysisMode === "rules_only";
+  const onceDaily = analysisMode === "once_daily";
   let refresh = scheduled && options.refresh === true;
-  const agentConfigured = managerAgentConfigured();
+  const agentConfigured = !rulesOnly && managerAgentConfigured();
   const key = {
     clientId: client.id,
     analysisDay,
@@ -240,7 +245,7 @@ export async function saveManagerReport(
   );
 
   let previousAgent: ReadyManagerAnalysis | null = null;
-  if (scheduled && !refresh) {
+  if (scheduled && (!refresh || onceDaily)) {
     const [existing] = await db
       .select({
         commerceAt: sql<string | null>`${reports.payload}#>>'{b2c,coverage,commerce,observedAt}'`,
@@ -250,11 +255,15 @@ export async function saveManagerReport(
         agent: sql<ReadyManagerAnalysis | null>`${reports.payload}->'agent'`,
         complete: sql<boolean>`COALESCE(${reports.payload}->>'trigger' = 'scheduled' AND ${reports.payload}#>>'{b2c,scope,commerceConfirmed}' = 'true'
           AND ${reports.payload}#>>'{b2c,version}' = ${B2C_VERSION}
-          AND (NOT ${agentConfigured} OR ${reports.payload}#>>'{agent,status}' = 'ready'), false)`,
+          AND (NOT ${agentConfigured} OR ${reports.payload}#>>'{agent,status}' = 'ready')
+          AND (NOT ${onceDaily} OR ${reports.payload}#>>'{agent,status}' IS DISTINCT FROM 'scheduled_for_later'), false)`,
       })
       .from(reports)
       .where(byKey);
     if (existing?.complete) {
+      if (onceDaily && existing.agentStatus === "ready") {
+        return { ...key, status: "existing" as const, commerceConfirmed: true, agentStatus: existing.agentStatus };
+      }
       previousAgent = existing.agent;
       const ref = { dateFrom: addDaysToDateOnly(period.dateFrom, -7), dateTo: addDaysToDateOnly(period.dateTo, -7) };
       const [commerce, ga] = await Promise.all([
@@ -310,11 +319,12 @@ export async function saveManagerReport(
       })) ?? [];
   const sectorMemory = buildManagerSectorMemory(result, analysisDay, previousDaily?.payload);
   const checkoutVariant = report.cro.evaluation.checkoutDiagnosis?.targetVariantId;
-  const shouldGenerate = !scheduled || report.scope.commerceConfirmed;
+  const shouldGenerate = !rulesOnly && (!scheduled || report.scope.commerceConfirmed);
+  const selection = scheduled && shouldGenerate ? managerScheduledModel(report.media.roasReview.rows, findings) : undefined;
   const [agent, tested] = await Promise.all([
     shouldGenerate
-      ? analyzeManagerWithOpenAI(result, findings, tracked ?? [], sectorMemory, learned, previousAgent)
-      : { status: "waiting_for_orders" as const },
+      ? analyzeManagerWithOpenAI(result, findings, tracked ?? [], sectorMemory, learned, { existing: previousAgent, selection })
+      : { status: rulesOnly ? "scheduled_for_later" as const : "waiting_for_orders" as const },
     checkoutVariant ? db.select({
       test: sql<Record<string, unknown>>`${archive.payload}->'checkoutTest'`,
     }).from(archive).where(and(
@@ -361,7 +371,8 @@ export async function saveManagerReport(
         setWhere: scheduled
           ? sql`(${refresh} OR ${reports.payload}->>'trigger' IS DISTINCT FROM 'scheduled' OR ${reports.payload}#>>'{b2c,scope,commerceConfirmed}' IS DISTINCT FROM 'true' OR
               ${reports.payload}#>>'{b2c,version}' IS DISTINCT FROM ${B2C_VERSION} OR
-              (${agentConfigured} AND ${reports.payload}#>>'{agent,status}' IS DISTINCT FROM 'ready')) AND ${reports.createdAt} <= ${now}`
+              (${agentConfigured} AND ${reports.payload}#>>'{agent,status}' IS DISTINCT FROM 'ready') OR
+              (${onceDaily} AND ${reports.payload}#>>'{agent,status}' = 'scheduled_for_later')) AND ${reports.createdAt} <= ${now}`
           : sql`${reports.payload}->>'trigger' IS DISTINCT FROM 'scheduled' AND ${reports.createdAt} <= ${now}`,
       })
       .returning({ clientId: reports.clientId });
@@ -401,6 +412,7 @@ async function runManagerBrandDaily(client: ManagerClient, now: Date) {
     );
     held = claim.rows[0]?.held === true;
     if (!held) return { day, status: "running", failed: 0 };
+    const analysisMode = managerScheduledAnalysisMode(now);
     const report = await saveManagerReport(
       client,
       { dateFrom: day, dateTo: day },
@@ -408,16 +420,18 @@ async function runManagerBrandDaily(client: ManagerClient, now: Date) {
         trigger: "scheduled",
         now,
         refresh: process.env.UP_MANAGER_REFRESH_DAILY === "1",
+        analysisMode,
       },
     );
     const brain = await archiveManagerReports(client.id);
+    const analysisComplete = analysisMode === "rules_only" || !managerAgentConfigured() || report.agentStatus === "ready";
     return {
       day,
       status: report.status,
       commerceConfirmed: report.commerceConfirmed,
       agentStatus: report.agentStatus,
       brain,
-      failed: report.commerceConfirmed && (!managerAgentConfigured() || report.agentStatus === "ready") && brain.status === "available" ? 0 : 1,
+      failed: report.commerceConfirmed && analysisComplete && brain.status === "available" ? 0 : 1,
     };
   } finally {
     if (held)

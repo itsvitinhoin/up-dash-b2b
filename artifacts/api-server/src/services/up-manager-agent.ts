@@ -94,8 +94,27 @@ export type ReadyManagerAnalysis = {
   inputCoverage: { included: number; total: number };
   inputFingerprint: string;
   reused?: boolean;
-  usage?: { inputTokens: number; cachedInputTokens: number; outputTokens: number };
+  modelReason?: ManagerModelReason;
+  usage?: { inputTokens: number; cachedInputTokens: number; cacheWriteTokens?: number; outputTokens: number };
 };
+
+type ManagerModelReason = "default" | "routine" | "media_action" | "revenue_decline" | "critical_finding";
+
+export function managerScheduledModel(
+  rows: Pick<B2cResult["report"]["media"]["roasReview"]["rows"][number], "status" | "recommendation">[],
+  findings: Pick<Finding, "id" | "priority">[],
+) {
+  const primary = process.env.UP_MANAGER_OPENAI_MODEL?.trim() || DEFAULT_MODEL;
+  const routine = process.env.UP_MANAGER_OPENAI_ROUTINE_MODEL?.trim();
+  if (!routine) return { model: primary, reason: "default" as const };
+  if (rows.some(({ status, recommendation }) => status === "active" && (recommendation === "pause" || recommendation === "scale")))
+    return { model: primary, reason: "media_action" as const };
+  if (findings.some(({ id, priority }) => id === "store-revenue-decline" && priority !== "P2"))
+    return { model: primary, reason: "revenue_decline" as const };
+  if (findings.some(({ priority }) => priority === "P0"))
+    return { model: primary, reason: "critical_finding" as const };
+  return { model: routine, reason: "routine" as const };
+}
 
 const observationTimes = new Set([
   "observedAt", "checkedAt", "stockObservedAt", "couponsObservedAt", "monitorObservedAt",
@@ -465,10 +484,10 @@ export async function analyzeManagerWithOpenAI(
   tracked: { plan: { title: string; metric: string; target: number }; result: unknown }[] = [],
   sectorMemory?: ReturnType<typeof buildManagerSectorMemory>,
   learned: { day: string; subject: string; change: string; outcome: string }[] = [],
-  existing?: ReadyManagerAnalysis | null,
+  options: { existing?: ReadyManagerAnalysis | null; selection?: { model: string; reason: ManagerModelReason } } = {},
 ) {
   const client = managerOpenAI();
-  const model = process.env.UP_MANAGER_OPENAI_MODEL?.trim() || DEFAULT_MODEL;
+  const model = options.selection?.model ?? (process.env.UP_MANAGER_OPENAI_MODEL?.trim() || DEFAULT_MODEL);
   if (!client) return { status: "unconfigured" as const };
   let usage: ReadyManagerAnalysis["usage"];
   try {
@@ -507,8 +526,8 @@ export async function analyzeManagerWithOpenAI(
         })),
     });
     const inputFingerprint = managerAnalysisFingerprint(model, input);
-    const reused = reuseManagerAnalysis(existing, inputFingerprint);
-    if (reused) return reused;
+    const reused = reuseManagerAnalysis(options.existing, inputFingerprint);
+    if (reused) return { ...reused, modelReason: options.selection?.reason };
     const response = await client.responses.create(
       {
         model,
@@ -532,9 +551,12 @@ export async function analyzeManagerWithOpenAI(
             : [],
         )
         .join("");
+    const inputDetails = response.usage?.input_tokens_details;
     usage = response.usage ? {
       inputTokens: response.usage.input_tokens,
-      cachedInputTokens: response.usage.input_tokens_details?.cached_tokens ?? 0,
+      cachedInputTokens: inputDetails?.cached_tokens ?? 0,
+      cacheWriteTokens: inputDetails && "cache_write_tokens" in inputDetails && typeof inputDetails.cache_write_tokens === "number"
+        ? inputDetails.cache_write_tokens : undefined,
       outputTokens: response.usage.output_tokens,
     } : undefined;
     if (!raw || response.status === "incomplete") {
@@ -610,6 +632,7 @@ export async function analyzeManagerWithOpenAI(
       createdAt: new Date().toISOString(),
       inputCoverage: { included: records.length, total: recordCount },
       inputFingerprint,
+      modelReason: options.selection?.reason,
       usage,
     } satisfies ReadyManagerAnalysis;
   } catch (err) {

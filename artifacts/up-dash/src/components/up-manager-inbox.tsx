@@ -84,7 +84,7 @@ type AgentInsight = {
   evidence: Evidence[];
 };
 type AgentAnalysis = {
-  status: "ready" | "unconfigured" | "unavailable" | "waiting_for_orders";
+  status: "ready" | "unconfigured" | "unavailable" | "waiting_for_orders" | "scheduled_for_later";
   model?: string;
   summary?: string;
   insights?: AgentInsight[];

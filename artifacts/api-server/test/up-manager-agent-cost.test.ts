@@ -2,11 +2,13 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   draftManagerClientUpdates,
   managerAnalysisFingerprint,
+  managerScheduledModel,
   reuseManagerAnalysis,
   serializeManagerEvidence,
   type ReadyManagerAnalysis,
 } from "../src/services/up-manager-agent";
 import type { B2cFinding } from "../src/services/up-manager-b2c";
+import { managerScheduledAnalysisMode } from "../src/services/up-manager-config";
 
 const { getOpenAIClient } = vi.hoisted(() => ({ getOpenAIClient: vi.fn() }));
 vi.mock("../src/lib/openai", () => ({ getOpenAIClient }));
@@ -89,5 +91,45 @@ describe("UP Manager model usage", () => {
 
     expect(finding.clientDraft).toBe("Olá! A conversão caiu de 2% para 1%. Nossa proposta é revisar a página do produto.");
     expect(getOpenAIClient).not.toHaveBeenCalled();
+  });
+});
+
+describe("scheduled UP Manager analysis", () => {
+  afterEach(() => vi.unstubAllEnvs());
+
+  it("only starts the daily AI analysis at 13h in São Paulo", () => {
+    expect(managerScheduledAnalysisMode(new Date("2026-11-27T11:00:00Z"), "13")).toBe("rules_only");
+    expect(managerScheduledAnalysisMode(new Date("2026-11-27T15:59:59Z"), "13")).toBe("rules_only");
+    expect(managerScheduledAnalysisMode(new Date("2026-11-27T16:00:00Z"), "13")).toBe("once_daily");
+    expect(managerScheduledAnalysisMode(new Date("2026-11-27T17:00:00Z"), "13")).toBe("once_daily");
+    expect(managerScheduledAnalysisMode(new Date("2026-11-27T11:00:00Z"), "")).toBe("on_evidence_change");
+  });
+
+  it("uses the routine model for investigation and low-priority revenue declines", () => {
+    vi.stubEnv("UP_MANAGER_OPENAI_MODEL", model);
+    vi.stubEnv("UP_MANAGER_OPENAI_ROUTINE_MODEL", "gpt-6-luna");
+    const active = [{ status: "active", recommendation: "investigate" }] as const;
+    const paused = [{ status: "paused", recommendation: "pause" }] as const;
+
+    expect(managerScheduledModel([...active, ...paused], [{ id: "store-revenue-decline", priority: "P2" }]))
+      .toEqual({ model: "gpt-6-luna", reason: "routine" });
+  });
+
+  it.each(["pause", "scale"] as const)("uses Sol for an active recommendation to %s", (recommendation) => {
+    vi.stubEnv("UP_MANAGER_OPENAI_MODEL", model);
+    vi.stubEnv("UP_MANAGER_OPENAI_ROUTINE_MODEL", "gpt-6-luna");
+
+    expect(managerScheduledModel([{ status: "active", recommendation }], []))
+      .toEqual({ model, reason: "media_action" });
+  });
+
+  it("uses Sol for a priority revenue loss or a critical finding", () => {
+    vi.stubEnv("UP_MANAGER_OPENAI_MODEL", model);
+    vi.stubEnv("UP_MANAGER_OPENAI_ROUTINE_MODEL", "gpt-6-luna");
+
+    expect(managerScheduledModel([], [{ id: "store-revenue-decline", priority: "P1" }]))
+      .toEqual({ model, reason: "revenue_decline" });
+    expect(managerScheduledModel([], [{ id: "inventory", priority: "P0" }]))
+      .toEqual({ model, reason: "critical_finding" });
   });
 });
