@@ -36,6 +36,9 @@
  *   TASK=whatsapp_fix_phone_waba -> corrige o waba_id de UM número em
  *     whatsapp_phone_numbers (ver CLIENT_ID/PHONE_NUMBER_ID/WABA_ID abaixo)
  *   TASK=run_migrations       -> aplica as migrations pendentes de lib/db/migrations
+ *   TASK=analyze_tables       -> roda ANALYZE em orders/customers/order_items (so estatistica,
+ *     nenhum dado muda) -- usar depois de um backfill grande (ex: Nuvemshop) pra evitar plano de
+ *     query ruim no painel (ver achado 27/11/2026 e docs/cloud-sql-regiao-errada-14-08-2026.md)
  *   TASK=paid_touchpoints     -> pré-aquece cache de touchpoint pago (evita
  *     primeiro carregamento lento do relatório de atribuição)
  *   TASK=purge_archived_clients -> apaga de vez os clientes excluídos (arquivados) há mais de 90 dias: banco do painel (cascata)
@@ -77,7 +80,7 @@
  */
 import "dotenv/config";
 import path from "node:path";
-import { and, eq } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import { migrate } from "drizzle-orm/node-postgres/migrator";
 import { db, whatsappPhoneNumbersTable } from "@workspace/db";
 import { logger } from "../lib/logger";
@@ -127,6 +130,20 @@ async function fixWhatsappPhoneWaba(params: {
     )
     .returning();
   return { updated: Boolean(updated), row: updated ?? null };
+}
+
+// Achado 27/11/2026 (backfill da Lila Rosa, 29 mil pedidos de uma vez): o
+// painel passou a travar/500 mesmo numa janela estreita -- a query de
+// cliente novo/recorrente agrupa TODO o historico de pedidos do cliente, e o
+// planner do Postgres ainda usa a estatistica de cardinalidade de quando o
+// cliente tinha poucas centenas de linhas (mesmo padrao ja visto em
+// routes/health.ts, 13/08/2026: carga grande sem ANALYZE = plano ruim).
+// ANALYZE so atualiza estatistica, nao muda dado nenhum.
+async function analyzeTables() {
+  await db.execute(sql`ANALYZE orders`);
+  await db.execute(sql`ANALYZE customers`);
+  await db.execute(sql`ANALYZE order_items`);
+  return { ok: true, analyzed: ["orders", "customers", "order_items"] };
 }
 
 function envBool(name: string): boolean {
@@ -227,6 +244,9 @@ async function main() {
     case "run_migrations":
       result = await runMigrations();
       break;
+    case "analyze_tables":
+      result = await analyzeTables();
+      break;
     case "paid_touchpoints":
       result = await runPaidTouchpointsSync(trigger, { clientId });
       break;
@@ -249,7 +269,7 @@ async function main() {
       result = await runGa4FreshnessCheck();
       break;
     default:
-      logger.error(`[upzero-sync-job] TASK desconhecida: "${task}". Válidas: upzero_transactional, upzero_analytics, meta_ads, nuvemshop_transactional, braavo_transactional, daily_metrics, ga4_daily, ga4_backfill, hourly_bundle, whatsapp_fix_phone_waba, run_migrations, paid_touchpoints, purge_archived_clients, sync_excluded_clients, sync_ads_accounts, check_data_freshness, ga4_discover.`);
+      logger.error(`[upzero-sync-job] TASK desconhecida: "${task}". Válidas: upzero_transactional, upzero_analytics, meta_ads, nuvemshop_transactional, braavo_transactional, daily_metrics, ga4_daily, ga4_backfill, hourly_bundle, whatsapp_fix_phone_waba, run_migrations, analyze_tables, paid_touchpoints, purge_archived_clients, sync_excluded_clients, sync_ads_accounts, check_data_freshness, ga4_discover.`);
       process.exit(1);
   }
 
