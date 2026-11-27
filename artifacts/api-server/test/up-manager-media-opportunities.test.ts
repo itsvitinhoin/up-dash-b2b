@@ -106,6 +106,7 @@ describe("retorno de anúncio após reposição", () => {
   it.each([
     { stock: 24, goodHistory: true, recommendation: "reactivate" },
     { stock: 24, goodHistory: false, recommendation: "reactivation-blocked" },
+    { stock: 3, goodHistory: true, recommendation: "reactivation-blocked" },
     { stock: 0, goodHistory: true, recommendation: undefined },
   ])("reavalia a pausa de ontem com estoque $stock e bom histórico $goodHistory", async ({ stock, goodHistory, recommendation }) => {
     const meta = vi.spyOn(graph, "readManagerMetaNodes").mockImplementation(async (_client, ids) => new Map(ids
@@ -128,7 +129,7 @@ describe("retorno de anúncio após reposição", () => {
       expect(row.recommendation).toBe(recommendation);
       if (recommendation) {
         expect(row.driver).toContain("Reposição confirmada");
-        expect(row.driver).toContain("0 → 24 un.");
+        expect(row.driver).toContain(`0 → ${stock} un.`);
       }
       if (recommendation === "reactivate") {
         expect(row.action).toContain("verba atual");

@@ -5,7 +5,7 @@ import type { PaidMediaRow } from "./up-manager-paid-media";
 const days = new Intl.NumberFormat("pt-BR", { maximumFractionDigits: 1 });
 export function applyCampaignWatch(row: PaidMediaRow, currency: string) {
   const evaluation = row.evaluation;
-  if (row.status !== "active" || !evaluation?.auction) return;
+  if (!evaluation?.auction || row.recommendation === "reactivate" || row.recommendation === "reactivation-blocked") return;
   const { auction, inventory } = evaluation;
   const product = inventory.products.find(({ grade }) => grade === "broken" || grade === "out_of_stock");
   const atRisk = inventory.products.find(({ grade, gradeDays }) => grade === "complete" && gradeDays != null && gradeDays <= 7);
