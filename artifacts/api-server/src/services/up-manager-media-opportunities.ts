@@ -3,7 +3,7 @@ import { addDaysToDateOnly } from "../lib/reporting-period";
 import { analyzeProductCampaigns } from "./product-campaign-analysis";
 import { fetchManagerStockAd, type fetchCampaignCatalog } from "./product-campaign-sources";
 import type { CampaignSnapshot } from "./product-campaign-monitor";
-import { campaignWindowPoints, evaluateCampaignInventory, type campaignInventoryContext, type buildCampaignWindows } from "./up-manager-campaign-evaluation";
+import { campaignWindowPoints, evaluateCampaignInventory, type CampaignEvaluation, type campaignInventoryContext, type buildCampaignWindows } from "./up-manager-campaign-evaluation";
 import { mediaRoas, type PaidMediaReview, type PaidMediaRow } from "./up-manager-paid-media";
 import { metaNodeActive, readManagerMetaNodes, readOwnedBudget, type MetaBudget, type MetaNode } from "./up-manager-meta-structure";
 import { managerMetaToken, type ManagerClient } from "./up-manager";
@@ -12,6 +12,7 @@ type Reviews = ReturnType<typeof buildCampaignWindows>;
 type Inventory = ReturnType<typeof campaignInventoryContext>;
 type Lookup = Map<string, MetaNode>;
 type Activity = { id: string; level: string; day: string; title: string };
+const pauseActivity = new Set(["Alteração de veiculação", "Pausa confirmada", "Pausa por estoque confirmada"]);
 export type BudgetAssessment = MetaBudget & { blockers: string[] };
 export type AudienceTest = {
   name: string; source: string | null; range: string | null; spend: number; purchases: number;
@@ -119,6 +120,32 @@ export function historicalReactivation(ad: PaidMediaRow, reviews: Reviews) {
   return { row, peer, reference };
 }
 
+/** Reuses the last observed stock pause for this exact ad and its original destination. */
+export function priorStockPauses(history: PaidMediaReview[], end: string) {
+  const latest = new Map<string, PaidMediaRow>();
+  for (const review of history) {
+    const date = review.multiWindowEnd ?? review.window.dateTo;
+    if (date > end || date < addDaysToDateOnly(end, -30)) continue;
+    for (const row of review.rows) {
+      if (row.level === "ad" && row.recommendation === "pause" && !latest.has(row.id)) latest.set(row.id, row);
+    }
+  }
+  return new Map([...latest].filter(([, row]) => row.pauseReason === "stock" && row.evaluation?.inventory?.products?.length));
+}
+
+export function confirmedRestock(prior: PaidMediaRow | undefined, row: PaidMediaRow, inventory: CampaignEvaluation["inventory"]) {
+  if (!prior?.evaluation?.inventory?.products || prior.id !== row.id || prior.campaignId !== row.campaignId || prior.adsetId !== row.adsetId) return [];
+  const byId = new Map(prior.evaluation.inventory.products.map((product) => [product.id, product]));
+  return inventory.products.flatMap((product) => {
+    const previous = byId.get(product.id);
+    if (!previous || product.grade === "unknown" || (previous.grade !== "broken" && previous.grade !== "out_of_stock")) return [];
+    const unavailable = new Set((previous.variants ?? []).filter(({ stock }) => stock === 0).map(({ id }) => id));
+    return product.variants.flatMap(({ id, label, stock }) => unavailable.has(id) && stock !== null && stock > 0
+      ? [{ product: product.name, variant: label, stock }]
+      : []);
+  });
+}
+
 function uniqueSeed(set: MetaNode | undefined) {
   const targeting = set?.targeting;
   const includes = targeting?.custom_audiences;
@@ -161,11 +188,19 @@ export function audienceTests(review: PaidMediaReview, sets: Lookup, audiences: 
 export async function applyMediaOpportunities(
   client: ManagerClient, review: PaidMediaReview, reviews: Reviews, ctx: Inventory,
   catalog: Awaited<ReturnType<typeof fetchCampaignCatalog>> | null, activity: Activity[],
-  audienceContext?: { previous: PaidMediaReview | null; products: string[]; funnel: { checkouts: number; purchases: number; window: PaidMediaReview["window"] } },
+  audienceContext?: {
+    previous: PaidMediaReview | null;
+    products: string[];
+    funnel: { checkouts: number; purchases: number; window: PaidMediaReview["window"] };
+    stockPauseHistory?: PaidMediaReview[];
+  },
 ) {
   if (!review.accountPriceComparable) return;
-  const recentlyChanged = (row: PaidMediaRow, days: number) => activity.some((event) =>
-    event.day >= addDaysToDateOnly(review.multiWindowEnd!, 1 - days) && (
+  const end = review.multiWindowEnd ?? review.window.dateTo;
+  const recentlyChanged = (row: PaidMediaRow, days: number, ignoreOwnPause = false) => activity.some((event) =>
+    event.day >= addDaysToDateOnly(end, 1 - days) && (
+      !ignoreOwnPause || event.level !== "ad" || event.id !== row.id || !pauseActivity.has(event.title)
+    ) && (
       (event.level === row.level && event.id === row.id) ||
       (event.level === "campaign" && event.id === row.campaignId) ||
       (event.level === "adset" && event.id === row.adsetId)));
@@ -182,7 +217,16 @@ export async function applyMediaOpportunities(
       comparisonAdId: winner.id, driver: reason, action, evaluation: { ...row.evaluation, decision: "pause", reason, action } });
   }
 
-  const potentialReturns = review.rows.filter((row) => !recentlyChanged(row, 3) && historicalReactivation(row, reviews)).slice(0, 12);
+  const stockPauses = priorStockPauses(audienceContext?.stockPauseHistory ?? [], end);
+  const candidates = review.rows.flatMap((row) => {
+    if (row.level !== "ad" || row.status !== "inactive") return [];
+    const prior = stockPauses.get(row.id);
+    const changed = recentlyChanged(row, 3);
+    const history = historicalReactivation(row, reviews);
+    if ((!prior && !history) || (changed && (!prior || recentlyChanged(row, 3, true)))) return [];
+    return [{ row, prior, history, changed }];
+  });
+  const potentialReturns = candidates.sort((a, b) => Number(Boolean(b.prior)) - Number(Boolean(a.prior))).slice(0, 12);
   const scaleCampaigns = review.rows.filter(({ recommendation }) => recommendation === "scale")
     .flatMap((row) => row.level === "campaign" ? [row.id] : row.campaignId ? [row.campaignId] : []);
   const setIds = [...reviews[30].rows.filter(({ level }) => level === "adset").map(({ id }) => id),
@@ -190,7 +234,7 @@ export async function applyMediaOpportunities(
   const [campaigns, sets, paused] = await Promise.all([
     readManagerMetaNodes(client, scaleCampaigns, budgetFields),
     readManagerMetaNodes(client, setIds, `campaign_id,targeting,promoted_object,${budgetFields}`),
-    readManagerMetaNodes(client, potentialReturns.map(({ id }) => id), "adset_id,campaign_id,status,effective_status"),
+    readManagerMetaNodes(client, potentialReturns.map(({ row }) => row.id), "adset_id,campaign_id,status,effective_status"),
   ]);
   assessScaleBudgets(review.rows, campaigns, sets, ctx, client.currency);
 
@@ -209,21 +253,27 @@ export async function applyMediaOpportunities(
   const token = managerMetaToken(client);
   if (!catalog || !token || !client.accountId || !ctx.snapshot) return;
   const signal = AbortSignal.timeout(12_000);
-  await Promise.all(potentialReturns.filter((row) => {
+  await Promise.all(potentialReturns.filter(({ row }) => {
     const node = paused.get(row.id);
     return node?.status === "PAUSED" && node.effective_status === "PAUSED" && node.adset_id === row.adsetId && node.campaign_id === row.campaignId;
-  }).map(async (row) => {
+  }).map(async ({ row, prior, history, changed }) => {
     const ad = await fetchManagerStockAd(client.accountId!, row.id, token, signal, "PAUSED").catch(() => null);
     if (!ad || ad.adsetId !== row.adsetId || ad.campaignId !== row.campaignId) return;
     const linked = analyzeProductCampaigns([ad], catalog.products, catalog.domains, "PAUSED");
     const snapshot: CampaignSnapshot = { ...ctx.snapshot!, ...linked };
     const stock = evaluateCampaignInventory(row, { ...ctx, snapshot });
-    const history = historicalReactivation(row, reviews)!;
-    const eligible = stock.scaleReady;
-    const reason = `Em 30 dias fechados, ${row.name} teve ${history.row.spending.purchases} compras, ROAS ${mediaRoas(history.row.roas)} (referência ${mediaRoas(history.reference)}) e CPA ${currency.format(adCpa(history.row))}, contra ${currency.format(adCpa(history.peer))} de ${history.peer.name}, ativo no mesmo conjunto.`;
+    const restored = confirmedRestock(prior, row, stock);
+    if (!restored.length && (!history || changed)) return;
+    const restock = restored.length ? `Reposição confirmada no destino deste anúncio: ${restored.slice(0, 4)
+      .map(({ product, variant, stock }) => `${product} · ${variant} (0 → ${count.format(stock)} un.)`).join("; ")}. ` : "";
+    const eligible = stock.scaleReady && Boolean(history);
+    const reason = restock + (history
+      ? `Em 30 dias fechados, ${row.name} teve ${history.row.spending.purchases} compras, ROAS ${mediaRoas(history.row.roas)} (referência ${mediaRoas(history.reference)}) e CPA ${currency.format(adCpa(history.row))}, contra ${currency.format(adCpa(history.peer))} de ${history.peer.name}, ativo no mesmo conjunto.`
+      : "O histórico de desempenho e a comparação com o conjunto ainda não sustentam um novo teste.");
     const action = eligible
       ? "Testar a reativação no conjunto original com a verba atual. Medir CPA, ROAS e grade após 72 h."
-      : "Manter pausado até a grade e a cobertura do destino sustentarem um novo teste.";
+      : history ? "Manter pausado até a grade e a cobertura do destino sustentarem um novo teste."
+      : "Manter pausado. Acompanhar o desempenho dos anúncios ativos antes de retestar este criativo.";
     Object.assign(row, { recommendation: eligible ? "reactivate" : "reactivation-blocked", driver: reason, action,
       evaluation: { windows: campaignWindowPoints(reviews, row), inventory: stock, decision: "maintain", opportunity: true, reason, action } });
   }));

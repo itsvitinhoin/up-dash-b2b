@@ -509,6 +509,7 @@ export async function buildB2cReport(
   }) : null;
   await applyMediaOpportunities(client, roasReview, campaignReviews, inventoryContext, catalog, mediaLog.events, {
     previous: previousAudienceReview,
+    stockPauseHistory: paidHistory.reviews,
     products: abc14.products.filter(({ abc, grade, coverageDays }) => abc === "A" && (client.commercePlatform === "BRAAVO" || (grade === "complete" && (coverageDays ?? 0) >= 7)))
       .slice(0, 16).map(({ name }) => name),
     funnel: { checkouts: currentFunnel?.checkouts ?? 0, purchases: currentFunnel?.purchases ?? 0, window: period },

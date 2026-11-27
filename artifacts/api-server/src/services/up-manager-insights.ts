@@ -33,6 +33,7 @@ import {
   type ReadyManagerAnalysis,
 } from "./up-manager-agent";
 import { archiveManagerReports } from "./up-manager-brain";
+import { mediaActionSignature, type PaidMediaRow } from "./up-manager-paid-media";
 import {
   managerCommerceSupported, managerMetaToken,
   type readManagerOverview,
@@ -220,6 +221,7 @@ export async function saveManagerReport(
     now?: Date;
     refresh?: boolean;
     analysisMode?: ReturnType<typeof managerScheduledAnalysisMode>;
+    refreshInventory?: boolean;
   } = {},
 ) {
   const now = options.now ?? new Date();
@@ -229,6 +231,7 @@ export async function saveManagerReport(
   const analysisMode = scheduled ? options.analysisMode : undefined;
   const rulesOnly = analysisMode === "rules_only";
   const onceDaily = analysisMode === "once_daily";
+  const refreshInventory = onceDaily && options.refreshInventory === true;
   let refresh = scheduled && options.refresh === true;
   const agentConfigured = !rulesOnly && managerAgentConfigured();
   const key = {
@@ -245,6 +248,7 @@ export async function saveManagerReport(
   );
 
   let previousAgent: ReadyManagerAnalysis | null = null;
+  let morningReport: { agent: ReadyManagerAnalysis; actions: string } | null = null;
   if (scheduled && (!refresh || onceDaily)) {
     const [existing] = await db
       .select({
@@ -253,33 +257,40 @@ export async function saveManagerReport(
         dpaStatus: sql<string | null>`${reports.payload}#>>'{b2c,product,dpa,status}'`,
         agentStatus: sql<string | null>`${reports.payload}#>>'{agent,status}'`,
         agent: sql<ReadyManagerAnalysis | null>`${reports.payload}->'agent'`,
+        stockRefreshedAt: sql<string | null>`${reports.payload}#>>'{sources,stockRefreshedAt}'`,
+        media: sql<PaidMediaRow[] | null>`${reports.payload}#>'{b2c,media,roasReview,rows}'`,
         complete: sql<boolean>`COALESCE(${reports.payload}->>'trigger' = 'scheduled' AND ${reports.payload}#>>'{b2c,scope,commerceConfirmed}' = 'true'
           AND ${reports.payload}#>>'{b2c,version}' = ${B2C_VERSION}
-          AND (NOT ${agentConfigured} OR ${reports.payload}#>>'{agent,status}' = 'ready')
+          AND (NOT ${agentConfigured} OR ${reports.payload}#>>'{agent,status}' IN ('ready','stock_refreshed'))
           AND (NOT ${onceDaily} OR ${reports.payload}#>>'{agent,status}' IS DISTINCT FROM 'scheduled_for_later'), false)`,
       })
       .from(reports)
       .where(byKey);
     if (existing?.complete) {
-      if (onceDaily && existing.agentStatus === "ready") {
-        return { ...key, status: "existing" as const, commerceConfirmed: true, agentStatus: existing.agentStatus };
+      if (onceDaily && (existing.agentStatus === "ready" || existing.agentStatus === "stock_refreshed")) {
+        if (!refreshInventory || existing.stockRefreshedAt || !existing.agent || existing.agentStatus !== "ready") {
+          return { ...key, status: "existing" as const, commerceConfirmed: true, agentStatus: existing.agentStatus };
+        }
+        morningReport = { agent: existing.agent, actions: mediaActionSignature(existing.media ?? []) };
+        refresh = true;
+      } else {
+        previousAgent = existing.agent;
+        const ref = { dateFrom: addDaysToDateOnly(period.dateFrom, -7), dateTo: addDaysToDateOnly(period.dateTo, -7) };
+        const [commerce, ga] = await Promise.all([
+          readCommerceFreshness(client.id, client.commercePlatform).catch(() => null),
+          readFunnel(client.id, period, ref, false).catch(() => null),
+        ]);
+        refresh = existing.dpaStatus === "blocked" || existing.dpaStatus === "pending" || reopenedSources({ commerceAt: existing.commerceAt, ga4: existing.ga4 ?? [] }, {
+          commerceAt: hasClosedOrders(commerce, period.dateTo) ? commerce!.observedAt : null,
+          ga4: [funnelFingerprint(ga?.current), funnelFingerprint(ga?.previous)],
+        });
+        if (!refresh) return {
+          ...key,
+          status: "existing" as const,
+          commerceConfirmed: true,
+          agentStatus: existing.agentStatus,
+        };
       }
-      previousAgent = existing.agent;
-      const ref = { dateFrom: addDaysToDateOnly(period.dateFrom, -7), dateTo: addDaysToDateOnly(period.dateTo, -7) };
-      const [commerce, ga] = await Promise.all([
-        readCommerceFreshness(client.id, client.commercePlatform).catch(() => null),
-        readFunnel(client.id, period, ref, false).catch(() => null),
-      ]);
-      refresh = existing.dpaStatus === "blocked" || existing.dpaStatus === "pending" || reopenedSources({ commerceAt: existing.commerceAt, ga4: existing.ga4 ?? [] }, {
-        commerceAt: hasClosedOrders(commerce, period.dateTo) ? commerce!.observedAt : null,
-        ga4: [funnelFingerprint(ga?.current), funnelFingerprint(ga?.previous)],
-      });
-      if (!refresh) return {
-        ...key,
-        status: "existing" as const,
-        commerceConfirmed: true,
-        agentStatus: existing.agentStatus,
-      };
     }
   }
   if (scheduled && client.commercePlatform === "NUVEMSHOP") await runProductCampaignCheck(client);
@@ -302,6 +313,9 @@ export async function saveManagerReport(
     !(previousDaily?.payload.b2c as { media?: { perEntity?: unknown[] } } | undefined)?.media?.perEntity?.length,
   );
   const { overview, products, report } = result;
+  if (morningReport && !report.scope.commerceConfirmed) {
+    return { ...key, status: "existing" as const, commerceConfirmed: true, agentStatus: "ready" as const };
+  }
   const findings = result.findings;
   const previousFindings = previousDaily?.payload.findings as
     | ManagerFinding[]
@@ -319,12 +333,18 @@ export async function saveManagerReport(
       })) ?? [];
   const sectorMemory = buildManagerSectorMemory(result, analysisDay, previousDaily?.payload);
   const checkoutVariant = report.cro.evaluation.checkoutDiagnosis?.targetVariantId;
-  const shouldGenerate = !rulesOnly && (!scheduled || report.scope.commerceConfirmed);
+  const shouldGenerate = !morningReport && !rulesOnly && (!scheduled || report.scope.commerceConfirmed);
+  const morningAgent = morningReport && (() => {
+    if (morningReport.actions !== mediaActionSignature(report.media.roasReview.rows))
+      return { status: "stock_refreshed" as const };
+    const { usage: _morningUsage, ...agent } = morningReport.agent;
+    return { ...agent, reused: true };
+  })();
   const selection = scheduled && shouldGenerate ? managerScheduledModel(report.media.roasReview.rows, findings) : undefined;
   const [agent, tested] = await Promise.all([
     shouldGenerate
       ? analyzeManagerWithOpenAI(result, findings, tracked ?? [], sectorMemory, learned, { existing: previousAgent, selection })
-      : { status: rulesOnly ? "scheduled_for_later" as const : "waiting_for_orders" as const },
+      : morningAgent ?? { status: rulesOnly ? "scheduled_for_later" as const : "waiting_for_orders" as const },
     checkoutVariant ? db.select({
       test: sql<Record<string, unknown>>`${archive.payload}->'checkoutTest'`,
     }).from(archive).where(and(
@@ -347,6 +367,7 @@ export async function saveManagerReport(
     sources: {
       mediaAvailable: overview.mediaAvailable,
       stockObservedAt: products.stockObservedAt,
+      ...(refreshInventory ? { stockRefreshedAt: now.toISOString() } : {}),
       productCampaignCheckedAt: monitor.checkedAt,
       productCampaignStale: monitor.stale,
     },
@@ -421,10 +442,11 @@ async function runManagerBrandDaily(client: ManagerClient, now: Date) {
         now,
         refresh: process.env.UP_MANAGER_REFRESH_DAILY === "1",
         analysisMode,
+        refreshInventory: managerScheduledAnalysisMode(now, "13") === "once_daily",
       },
     );
     const brain = await archiveManagerReports(client.id);
-    const analysisComplete = analysisMode === "rules_only" || !managerAgentConfigured() || report.agentStatus === "ready";
+    const analysisComplete = analysisMode === "rules_only" || !managerAgentConfigured() || report.agentStatus === "ready" || report.agentStatus === "stock_refreshed";
     return {
       day,
       status: report.status,

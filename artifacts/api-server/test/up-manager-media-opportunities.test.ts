@@ -1,7 +1,13 @@
-import { describe, expect, it } from "vitest";
-import { assessScaleBudgets, audienceTests, findSiblingBudgetWaste, historicalReactivation } from "../src/services/up-manager-media-opportunities";
-import { campaignInventoryContext, campaignPeriod, type CampaignEvaluation } from "../src/services/up-manager-campaign-evaluation";
-import type { PaidMediaReview, PaidMediaRow } from "../src/services/up-manager-paid-media";
+import { describe, expect, it, vi } from "vitest";
+import { applyMediaOpportunities, assessScaleBudgets, audienceTests, findSiblingBudgetWaste, historicalReactivation } from "../src/services/up-manager-media-opportunities";
+import { campaignInventoryContext, campaignPeriod, evaluateCampaignInventory, type CampaignEvaluation } from "../src/services/up-manager-campaign-evaluation";
+import { mediaActionSignature, type PaidMediaReview, type PaidMediaRow } from "../src/services/up-manager-paid-media";
+import { analyzeProductCampaigns, type CampaignAd, type CatalogProduct } from "../src/services/product-campaign-analysis";
+import { catalogSnapshot } from "../src/services/up-manager-b2c-products";
+import type { ManagerClient, readVariantSales } from "../src/services/up-manager";
+import * as graph from "../src/services/up-manager-meta-structure";
+import * as sources from "../src/services/product-campaign-sources";
+import { applyCampaignWatch } from "../src/services/up-manager-campaign-watch";
 import type { MetaNode } from "../src/services/up-manager-meta-structure";
 
 const ad = (id: string, spend: number, purchases: number, revenue: number, options: Partial<PaidMediaRow> = {}): PaidMediaRow => ({
@@ -66,5 +72,74 @@ describe("decisões de mídia por estrutura", () => {
       action: expect.stringContaining("1%–3%"),
     }]);
     expect(audienceTests(review([winner, { ...peer, campaignId: "99" }]), sets, audiences)).toEqual([]);
+  });
+});
+
+describe("retorno de anúncio após reposição", () => {
+  const domain = "marca.example";
+  const makeProduct = (stock: number): CatalogProduct => ({
+    id: 123, name: "Conjunto Helena", handle: "conjunto-helena", published: true,
+    attributes: ["Cor", "Tamanho"],
+    variants: [{ id: 8, stock, values: ["Marinho", "P"] }, { id: 9, stock: 35, values: ["Marinho", "M"] }],
+  });
+  const creative: CampaignAd = {
+    id: "511", name: "Criativo Helena", campaignId: "11", campaignName: "Vendas", adsetId: "12", adsetName: "Público",
+    effectiveStatus: "PAUSED", urls: [`https://${domain}/produtos/conjunto-helena/`], catalog: false, imageUrl: null, spend: null, impressions: null,
+  };
+  const sales = ["123:8", "123:9"].map((externalId) => ({
+    externalId, id: externalId, units: 7, name: "Helena", color: "Marinho", size: null, sku: "", revenue: 700,
+  })) satisfies Awaited<ReturnType<typeof readVariantSales>>;
+  const snapshot = (product: CatalogProduct, advertising: CampaignAd) => ({
+    ...analyzeProductCampaigns([advertising], [product], [domain], advertising.effectiveStatus === "PAUSED" ? "PAUSED" : "ACTIVE"),
+    version: 1 as const, accountId: "1", storeId: "1", adsObservedAt: "", stockObservedAt: "",
+    window: campaignPeriod("2026-11-22", 7), currency: "BRL", timeZone: "America/Sao_Paulo", warnings: [],
+  });
+  const priorProduct = makeProduct(0);
+  const priorStock = evaluateCampaignInventory({ id: creative.id, level: "ad" }, campaignInventoryContext(
+    snapshot(priorProduct, { ...creative, effectiveStatus: "ACTIVE" }), catalogSnapshot([priorProduct]), sales, sales,
+  ));
+  const prior = ad(creative.id, 224.93, 8, 1874.72, {
+    recommendation: "pause", pauseReason: "stock", evaluation: { inventory: priorStock } as CampaignEvaluation,
+  });
+  const history = { ...review([prior]), multiWindowEnd: "2026-11-21" };
+
+  it.each([
+    { stock: 24, goodHistory: true, recommendation: "reactivate" },
+    { stock: 24, goodHistory: false, recommendation: "reactivation-blocked" },
+    { stock: 0, goodHistory: true, recommendation: undefined },
+  ])("reavalia a pausa de ontem com estoque $stock e bom histórico $goodHistory", async ({ stock, goodHistory, recommendation }) => {
+    const meta = vi.spyOn(graph, "readManagerMetaNodes").mockImplementation(async (_client, ids) => new Map(ids
+      .filter((id) => id === creative.id)
+      .map((id) => [id, { id, name: creative.name, status: "PAUSED", effective_status: "PAUSED", adset_id: "12", campaign_id: "11" }])));
+    const readAd = vi.spyOn(sources, "fetchManagerStockAd").mockResolvedValue(creative);
+    try {
+      const current = makeProduct(stock);
+      const row = ad(creative.id, 224.93, goodHistory ? 8 : 1, 1874.72, { status: "inactive" });
+      const month = review([row, ad("600", 1923.71, 36, 9142.58), ad("12", 2267.7, 45, 11204.22, { level: "adset" })]);
+      const currentReview = { ...review([row], 7), multiWindowEnd: "2026-11-22" };
+      await applyMediaOpportunities(
+        { id: "fixture", currency: "BRL", accountId: "1", metaToken: "test" } as ManagerClient,
+        currentReview, { 30: month, 14: month, 7: month, 3: month },
+        campaignInventoryContext(snapshot(current, creative), catalogSnapshot([current]), sales, sales),
+        { products: [current], domains: [domain], observedAt: "2026-11-23T10:00:00Z" },
+        [{ id: row.id, level: "ad", day: "2026-11-21", title: "Pausa por estoque confirmada" }],
+        { previous: null, products: [], funnel: { checkouts: 0, purchases: 0, window: currentReview.window }, stockPauseHistory: [history] },
+      );
+      expect(row.recommendation).toBe(recommendation);
+      if (recommendation) {
+        expect(row.driver).toContain("Reposição confirmada");
+        expect(row.driver).toContain("0 → 24 un.");
+      }
+      if (recommendation === "reactivate") {
+        expect(row.action).toContain("verba atual");
+        expect(mediaActionSignature([row])).not.toEqual(mediaActionSignature([prior]));
+        row.evaluation!.auction = { trend: "recovery" } as NonNullable<CampaignEvaluation["auction"]>;
+        applyCampaignWatch(row, "BRL");
+        expect(row.recommendation).toBe("reactivate");
+      }
+    } finally {
+      meta.mockRestore();
+      readAd.mockRestore();
+    }
   });
 });

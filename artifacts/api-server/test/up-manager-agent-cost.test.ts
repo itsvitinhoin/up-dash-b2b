@@ -97,12 +97,14 @@ describe("UP Manager model usage", () => {
 describe("scheduled UP Manager analysis", () => {
   afterEach(() => vi.unstubAllEnvs());
 
-  it("only starts the daily AI analysis at 13h in São Paulo", () => {
+  it("only starts the daily AI analysis at the configured local hour in São Paulo", () => {
     expect(managerScheduledAnalysisMode(new Date("2026-11-27T11:00:00Z"), "13")).toBe("rules_only");
     expect(managerScheduledAnalysisMode(new Date("2026-11-27T15:59:59Z"), "13")).toBe("rules_only");
     expect(managerScheduledAnalysisMode(new Date("2026-11-27T16:00:00Z"), "13")).toBe("once_daily");
     expect(managerScheduledAnalysisMode(new Date("2026-11-27T17:00:00Z"), "13")).toBe("once_daily");
     expect(managerScheduledAnalysisMode(new Date("2026-11-27T11:00:00Z"), "")).toBe("on_evidence_change");
+    expect(managerScheduledAnalysisMode(new Date("2026-11-27T09:59:59Z"), "7")).toBe("rules_only");
+    expect(managerScheduledAnalysisMode(new Date("2026-11-27T10:00:00Z"), "7")).toBe("once_daily");
   });
 
   it("uses the routine model for investigation and low-priority revenue declines", () => {

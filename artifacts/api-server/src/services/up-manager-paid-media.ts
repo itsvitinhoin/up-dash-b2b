@@ -329,6 +329,13 @@ export function scaleStockConfirmed(snapshot: CampaignSnapshot | null, campaignI
   );
 }
 
+export function mediaActionSignature(rows: PaidMediaRow[]) {
+  return rows.filter(({ recommendation }) => recommendation === "pause" || recommendation === "scale" ||
+    recommendation === "reactivate" || recommendation === "reactivation-blocked")
+    .map(({ id, level, recommendation, pauseReason }) => `${level}:${id}:${recommendation}:${pauseReason ?? ""}`)
+    .sort().join("|");
+}
+
 export function buildPaidMediaFinding(review: PaidMediaReview): B2cFinding | null {
   const actions = review.rows.filter((row) => (row.status === "active" && (row.recommendation === "pause" || row.recommendation === "scale")) ||
     row.recommendation === "reactivate");

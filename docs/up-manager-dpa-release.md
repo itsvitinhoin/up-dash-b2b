@@ -2,7 +2,7 @@
 
 ## Cloud Run
 
-O job existente `up-manager-aiyu-daily` fica no projeto `up-vesti-report`, região `us-central1`. O Cloud Scheduler dispara às 08h e às 13h, em `America/Sao_Paulo`. Use a imagem da branch do piloto e preserve a conta de serviço, os segredos e o agendamento do job.
+O job existente `up-manager-aiyu-daily` fica no projeto `up-vesti-report`, região `us-central1`. O Cloud Scheduler dispara às 07h e às 13h, em `America/Sao_Paulo`. Use a imagem da branch do piloto e preserve a conta de serviço, os segredos e o agendamento do job.
 
 A configuração é por marca.
 

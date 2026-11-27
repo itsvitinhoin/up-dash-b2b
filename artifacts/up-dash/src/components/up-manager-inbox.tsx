@@ -84,7 +84,7 @@ type AgentInsight = {
   evidence: Evidence[];
 };
 type AgentAnalysis = {
-  status: "ready" | "unconfigured" | "unavailable" | "waiting_for_orders" | "scheduled_for_later";
+  status: "ready" | "unconfigured" | "unavailable" | "waiting_for_orders" | "scheduled_for_later" | "stock_refreshed";
   model?: string;
   summary?: string;
   insights?: AgentInsight[];
@@ -670,6 +670,7 @@ export function UpManagerInbox({
           </span>
           {summary && <span className="mt-1.5 line-clamp-2 text-sm leading-relaxed group-open:line-clamp-none">{summary}</span>}
         </summary>
+        {payload.agent?.status === "stock_refreshed" && <p className="mt-2 text-xs text-muted-foreground">Decisões atualizadas após a leitura de estoque e mídia. A análise da manhã está no Brain.</p>}
         {payload.agent?.status === "unavailable" && <p className="mt-2 text-xs text-muted-foreground">Leitura da OpenAI indisponível nesta rodada. A fila inclui as decisões verificadas por regras.</p>}
       </details>
       <nav className="flex flex-wrap items-center gap-1 rounded-xl border bg-muted/30 p-1.5" aria-label="Operação do Up Manager">
