@@ -59,6 +59,25 @@ const pct = new Intl.NumberFormat("pt-BR", { style: "percent", maximumFractionDi
 const label = new Intl.NumberFormat("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const showRoas = (value: number) => `${label.format(value)}×`;
 
+export function leadingRoasDriver(before: AuctionPoint, current: AuctionPoint, direction: "decline" | "recovery") {
+  if (before.purchaseRate !== null && current.purchaseRate !== null &&
+    (before.purchaseRate === 0) !== (current.purchaseRate === 0)) {
+    return { key: "purchaseRate" as const, name: "compras por clique", before: before.purchaseRate, current: current.purchaseRate };
+  }
+  return ([
+    { key: "cpm", name: "custo de entrega (CPM)", sign: -1 },
+    { key: "ctr", name: "taxa de clique (CTR)", sign: 1 },
+    { key: "purchaseRate", name: "compras por clique", sign: 1 },
+    { key: "ticket", name: "valor por compra", sign: 1 },
+  ] as const).flatMap(({ key, name, sign }) => {
+    const a = before[key];
+    const b = current[key];
+    if (a === null || b === null || a <= 0 || b <= 0) return [];
+    const change = Math.log(b / a) * sign;
+    return (direction === "decline" ? change < 0 : change > 0) ? [{ key, name, before: a, current: b, change }] : [];
+  }).sort((a, b) => Math.abs(b.change) - Math.abs(a.change))[0] ?? null;
+}
+
 export function evaluateAuction(row: PaidMediaRow, reviews: ReturnType<typeof buildCampaignWindows>, reference: PaidMediaReview): AuctionEvaluation | undefined {
   const spending = (review: PaidMediaReview) => review.rows.find(({ level, id }) => row.level === level && row.id === id)?.spending;
   const latest = spending(reviews[3]);
@@ -75,16 +94,9 @@ export function evaluateAuction(row: PaidMediaRow, reviews: ReturnType<typeof bu
   const decline = current.roas !== null && comparable?.roas != null && comparable.purchases >= 3 && current.roas <= comparable.roas * 0.75 && latest.clicks >= 30;
   if ((!recovery && !decline) || !comparable) return { before, preceding, current, trend: "stable", summary: null, detail: null };
   const improved = Boolean(recovery);
-  const drivers: { name: string; change: number }[] = [];
-  for (const [name, a, b, direction] of [["custo de entrega (CPM)", comparable.cpm, current.cpm, -1],
-    ["taxa de clique (CTR)", comparable.ctr, current.ctr, 1], ["compras por clique", comparable.purchaseRate, current.purchaseRate, 1],
-    ["valor por compra", comparable.ticket, current.ticket, 1]] as const) {
-    if (a != null && b != null && a > 0 && b > 0) drivers.push({ name, change: Math.log(b / a) * direction });
-  }
-  const effect = comparable.purchaseRate === 0 || current.purchaseRate === 0 ? "compras por clique" : drivers
-    .filter(({ change }) => improved ? change > 0 : change < 0).sort((a, b) => improved ? b.change - a.change : a.change - b.change)[0]?.name;
+  const effect = leadingRoasDriver(comparable, current, improved ? "recovery" : "decline");
   const source = comparable === before ? "nos mesmos dias da semana anterior" : "no trecho anterior da última semana";
-  const summary = `ROAS ${showRoas(comparable.roas!)} → ${showRoas(current.roas!)} ${source}. ${effect ? `A maior contribuição veio de ${effect}.` : "A variação precisa de mais volume para ser explicada."}`;
+  const summary = `ROAS ${showRoas(comparable.roas!)} → ${showRoas(current.roas!)} ${source}. ${effect ? `A maior contribuição veio de ${effect.name}.` : "A variação precisa de mais volume para ser explicada."}`;
   const detail = comparable.purchaseRate != null && current.purchaseRate != null
     ? `Compras por clique ${pct.format(comparable.purchaseRate)} → ${pct.format(current.purchaseRate)}. A leitura recente reúne ${current.purchases} compras atribuídas.` : null;
   return { before, preceding, current, trend: improved ? "recovery" : "decline", summary, detail };

@@ -29,7 +29,7 @@ export type CampaignEvaluation = {
   windows: WindowPoint[];
   inventory: { products: ProductCoverage[]; totalProducts: number; unknownAds: number; unmatchedReasons?: string[]; coverageDays: number | null; gradeDays: number | null; scaleReady: boolean };
   decision: "maintain" | "investigate" | "scale" | "pause";
-  diagnosis?: { factors: { label: string; detail: string }[] };
+  diagnosis?: { factors: { label: string; detail: string }[]; summary?: string; followUp?: string };
   auction?: AuctionEvaluation;
   breakpoint?: NonNullable<ReturnType<typeof firstMediaBreak>>;
   watch?: { kind: "grade" | "recovery" | "decline"; detail: string; action: string };

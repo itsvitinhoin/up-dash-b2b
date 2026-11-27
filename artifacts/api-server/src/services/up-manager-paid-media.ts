@@ -357,14 +357,16 @@ export function buildPaidMediaFinding(review: PaidMediaReview): B2cFinding | nul
     detail: row.driver,
   })).concat(first.evaluation?.diagnosis?.factors ?? []);
   const action = `Começar por ${first.name}. ${first.action}`;
+  const diagnosis = first.recommendation === "investigate" ? first.evaluation?.diagnosis : undefined;
+  const followUp = diagnosis?.followUp ?? "Medir compras, ROAS e CPA na próxima janela madura e cruzar com o funil da loja.";
   return {
     id: "paid-media-roas", title: attention.length ? "Campanhas e anúncios que exigem atenção" : "Ações recomendadas na Meta",
     section: "campaigns", focus: "campaigns", priority: paused.length || attention.length ? "P1" : "P2",
-    evidence: `${first.name}. ${first.evaluation?.auction?.summary ?? first.driver}`,
+    evidence: `${first.name}. ${diagnosis?.summary ?? (first.recommendation === "investigate" ? first.evaluation?.auction?.summary : null) ?? first.driver}`,
     hypothesis: `${paused.length} para desativar · ${attention.length} para investigar · ${scaling.length} para escalar · ${reactivation.length} para testar reativação.`,
     action, owner: "Gestão de mídia",
-    followUp: "Medir compras, ROAS e CPA na próxima janela madura e cruzar com o funil da loja.",
-    diagnosis: { source: "meta", factors, action, followUp: "Verificar o resultado após a mudança.",
+    followUp,
+    diagnosis: { source: "meta", factors, action, followUp,
       unresolved: "Os comparativos identificam em que etapa ou anúncio a perda se concentrou. A causa técnica depende das evidências ligadas ao anúncio e à loja." },
   };
 }

@@ -229,6 +229,43 @@ interface FunnelBreakdown {
   purchases: number;
 }
 
+async function readGa4ChannelPeriods(
+  clientId: string, propertyId: string, current: ManagerPeriod, previous: ManagerPeriod,
+) {
+  const { bigquery, vestiTable } = await import("../lib/bigquery");
+  const [rows] = await bigquery.query({
+    location: "US", jobTimeoutMs: 10_000,
+    params: { clientId, propertyId, currentFrom: current.dateFrom, currentTo: current.dateTo,
+      priorFrom: previous.dateFrom, priorTo: previous.dateTo },
+    query: `
+      WITH periods AS (
+        SELECT 'current' AS period, DATE(@currentFrom) AS start_date, DATE(@currentTo) AS end_date
+        UNION ALL SELECT 'previous', DATE(@priorFrom), DATE(@priorTo)
+      ), traffic AS (
+        SELECT period, start_date, end_date, date, channel_group, sessions, engaged_sessions,
+               add_to_cart, begin_checkout, purchases
+        FROM ${vestiTable(GA4_BQ_DATASET, "ga4_traffic_daily")} JOIN periods ON date BETWEEN start_date AND end_date
+        WHERE client_id = @clientId AND property_id = @propertyId
+      ), covered AS (
+        SELECT period FROM traffic GROUP BY period, start_date, end_date
+        HAVING COUNT(DISTINCT date) = DATE_DIFF(end_date, start_date, DAY) + 1
+          AND COUNTIF(sessions IS NULL OR purchases IS NULL) = 0
+      )
+      SELECT period, COALESCE(NULLIF(TRIM(channel_group), ''), 'Sem identificação') AS name,
+             SUM(sessions) AS traffic, SUM(add_to_cart) AS carts, SUM(begin_checkout) AS checkouts,
+             SUM(purchases) AS purchases, IF(COUNTIF(engaged_sessions IS NULL) = 0, SUM(engaged_sessions), NULL) AS engaged
+      FROM traffic WHERE period IN (SELECT period FROM covered)
+      GROUP BY period, name ORDER BY traffic DESC, name`,
+  });
+  const forPeriod = (period: string) => rows
+    .filter((row) => row.period === period).map((row) => ({
+      name: String(row.name), traffic: Number(row.traffic), carts: Number(row.carts),
+      checkouts: Number(row.checkouts), purchases: Number(row.purchases),
+      engaged: row.engaged == null ? null : Number(row.engaged),
+    }));
+  return { current: forPeriod("current"), previous: forPeriod("previous") };
+}
+
 async function readBigQueryFunnel(
   clientId: string,
   current: ManagerPeriod,
@@ -275,25 +312,10 @@ async function readBigQueryFunnel(
   if (!currentFunnel || !currentRow?.propertyId) return null;
   const sameProperty = currentRow.propertyId === previousRow?.propertyId;
 
-  const breakdown = async (
-    scope: "channel" | "product",
-  ): Promise<FunnelBreakdown[] | null> => {
-    const byChannel = scope === "channel";
-    const table = vestiTable(
-      GA4_BQ_DATASET,
-      byChannel ? "ga4_traffic_daily" : "ga4_product_funnel_daily",
-    );
-    const name = byChannel
-      ? "channel_group"
-      : "COALESCE(NULLIF(item_name, ''), item_id)";
-    const columns = byChannel
-      ? ["sessions", "add_to_cart", "begin_checkout", "purchases"]
-      : [
-          "items_viewed",
-          "items_added_to_cart",
-          "items_checked_out",
-          "items_purchased",
-        ];
+  const productBreakdown = async (): Promise<FunnelBreakdown[] | null> => {
+    const table = vestiTable(GA4_BQ_DATASET, "ga4_product_funnel_daily");
+    const name = "COALESCE(NULLIF(item_name, ''), item_id)";
+    const columns = ["items_viewed", "items_added_to_cart", "items_checked_out", "items_purchased"];
     const [rows] = await bigquery.query({
       location: "US",
       jobTimeoutMs: 10_000,
@@ -321,15 +343,17 @@ async function readBigQueryFunnel(
         }))
       : null;
   };
-  const [channels, products] = includeBreakdown ? await Promise.all([
-    breakdown("channel").catch(() => null),
-    breakdown("product").catch(() => null),
+  const [channelPeriods, products] = includeBreakdown ? await Promise.all([
+    readGa4ChannelPeriods(clientId, String(currentRow.propertyId), current, previous).catch(() => null),
+    productBreakdown().catch(() => null),
   ]) : [null, null];
   return {
     current: currentFunnel,
     previous: sameProperty ? previousFunnel : null,
     propertyId: sameProperty && previousFunnel ? String(currentRow.propertyId) : null,
-    channels,
+    channels: channelPeriods?.current.length ? channelPeriods.current.slice(0, 12) : null,
+    channelComparison: sameProperty && previousFunnel && channelPeriods?.current.length && channelPeriods.previous.length
+      ? channelPeriods : null,
     products,
   };
 }
@@ -354,6 +378,7 @@ export async function readFunnel(
     previous: prior,
     propertyId: null,
     channels: warehouse?.channels ?? null,
+    channelComparison: null,
     products: warehouse?.products ?? null,
   };
 }

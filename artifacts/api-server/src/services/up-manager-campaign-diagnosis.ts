@@ -1,3 +1,4 @@
+import { auctionPoint, leadingRoasDriver } from "./up-manager-auction";
 import { campaignWeeklyComparison, type buildCampaignWindows } from "./up-manager-campaign-evaluation";
 import type { FreightReport } from "./up-manager-shipping-insights";
 import type { CommercialSnapshot } from "./up-manager-b2c";
@@ -66,6 +67,10 @@ export function diagnoseCampaignDecline(row: PaidMediaRow, reviews: Reviews, sou
   if (!evaluation) return;
   const factors: { label: string; detail: string }[] = [];
   const weeks = campaignWeeklyComparison(reviews, row);
+  const weeklyDriver = weeks && weeks.after < weeks.before && weeks.previous.purchases >= 3 &&
+    Math.min(weeks.previous.clicks, weeks.current.clicks) >= 30
+    ? leadingRoasDriver(auctionPoint(weeks.previous, reviews[7].previousWindow), auctionPoint(weeks.current, reviews[7].window), "decline")
+    : null;
   const money = new Intl.NumberFormat("pt-BR", { style: "currency", currency: source.currency });
   const losses = adLosses(row, reviews);
   const majorLoss = losses.filter(({ loss }) => loss > 0).sort((a, b) => b.loss - a.loss)[0];
@@ -80,6 +85,23 @@ export function diagnoseCampaignDecline(row: PaidMediaRow, reviews: Reviews, sou
       const after = current.purchases / current.clicks;
       factors.push({ label: "Eficiência após o clique", detail: `Compras por clique de link ${pct.format(before)} → ${pct.format(after)}. CPC ${money.format(previous.spend / previous.clicks)} → ${money.format(current.spend / current.clicks)}.${current.purchases > 0 ? ` Valor atribuído por compra ${money.format(previous.revenue / previous.purchases)} → ${money.format(current.revenue / current.purchases)}.` : ""}` });
     }
+  }
+  const formatDriver = weeklyDriver?.key === "cpm" || weeklyDriver?.key === "ticket" ? money.format : pct.format;
+  const summary = weeklyDriver
+    ? `Duas semanas fechadas: ROAS ${mediaRoas(weeks!.before)} → ${mediaRoas(weeks!.after)}. Maior pressão medida em ${weeklyDriver.name} (${formatDriver(weeklyDriver.before)} → ${formatDriver(weeklyDriver.current)}).`
+    : undefined;
+  if (summary) {
+    const previous = auctionPoint(weeks!.previous, reviews[7].previousWindow);
+    const current = auctionPoint(weeks!.current, reviews[7].window);
+    const show = (value: number | null, format: (n: number) => string) => value === null ? "indisponível" : format(value);
+    const pairs = [
+      ["CPM", previous.cpm, current.cpm, money.format],
+      ["CTR de link", previous.ctr, current.ctr, pct.format],
+      ["Compras por clique", previous.purchaseRate, current.purchaseRate, pct.format],
+      ["Valor atribuído por compra", previous.ticket, current.ticket, money.format],
+    ] as const;
+    factors.push({ label: "Decomposição do ROAS", detail: pairs.map(([name, before, after, format]) =>
+      `${name} ${show(before, format)} → ${show(after, format)}`).join(" · ") + ". São contribuições de mídia na mesma janela." });
   }
   if (row.previousSpending && !row.previousSpending.missingValue && !row.spending.missingValue && row.previousSpending.spend > 0 && row.spending.spend > 0) {
     const { window, previousWindow } = source.maturePeriods;
@@ -122,13 +144,25 @@ export function diagnoseCampaignDecline(row: PaidMediaRow, reviews: Reviews, sou
     const inventory = destination.products ? ` ${destination.products} produtos no recorte ${coverage}. ${destination.broken} com grade incompleta, ${destination.soldOut} esgotados e ${destination.unknown} com grade sem confirmação.${destination.publicStockProducts ? ` Saldo consultado na vitrine para ${destination.publicStockProducts} produtos, nas variantes exibidas.` : ""}` : " Catálogo sem vínculo verificável para esta página.";
     const affected = destination.affected.map((item) => `${item.name} (${item.missing.join(", ")})${item.recentlyBroken ? ` · ${item.recentlyBroken} opções zeraram desde a leitura anterior` : ""}`).join(". ");
     const mobileText = mobile.current && mobile.previous && Math.min(mobile.previous.sessions, mobile.current.sessions) >= 30
-      ? ` No celular, rejeição ${display(mobile.previous.bounce)} → ${display(mobile.current.bounce)}.` : "";
+      ? ` No celular, ${mobile.previous.sessions} → ${mobile.current.sessions} sessões, rejeição ${display(mobile.previous.bounce)} → ${display(mobile.current.bounce)} e compras por sessão ${display(mobile.previous.purchaseRate)} → ${display(mobile.current.purchaseRate)}.` : "";
     factors.push({ label: `${destination.name ?? destination.path} · página de destino`, detail: `${destination.derived ? "Destino observado no GA4 por campanha. " : ""}${metric}${mobileText}${inventory}${affected ? ` ${affected}.` : ""}` });
   }
-  if (evaluation.auction?.trend === "decline") {
+  if (row.level === "campaign" && weeks) {
+    const pages = source.destinations.filter(({ campaign }) => campaign.previous && campaign.current);
+    if (pages.length) {
+      const sessions = (period: "previous" | "current") => pages.reduce((total, page) => total + page.campaign[period]!.sessions, 0);
+      if (Math.min(weeks.previous.clicks, weeks.current.clicks, sessions("previous"), sessions("current")) >= 30) {
+        factors.push({ label: "GA4 · chegada aos destinos medidos", detail:
+          `Sessões por clique nos ${pages.length} destinos com vínculo: ${pct.format(sessions("previous") / weeks.previous.clicks)} → ${pct.format(sessions("current") / weeks.current.clicks)}. O comparativo usa sessões GA4 e cliques Meta, com cobertura limitada aos destinos listados.` });
+      }
+    }
+  }
+  if (weeklyDriver || evaluation.auction?.trend === "decline") {
     const freight = source.shipping?.states.filter(({ price, delivery }) =>
       (price.material && price.direction === "worsened") || (delivery.material && delivery.direction === "worsened")).slice(0, 4);
+    const prices = catalogChanges.filter(({ changed }) => changed.some((change) => change.includes("Preço")));
     const commercialSignals = [
+      prices.length ? prices.map(({ name, changed }) => `${name} · ${changed.filter((change) => change.includes("Preço")).join(", ")}`).join(". ") + "." : "",
       source.coupons?.length ? `${source.coupons.length} mudanças de cupom observadas entre as duas leituras da loja.` : "",
       freight?.length ? `Preço ou prazo de frete piorou em ${freight.map(({ state }) => state).join(", ")} nos pedidos pagos. ${showPeriod(source.shipping!.currentWindow)}.` : "",
       "O impacto dessas mudanças na campanha exige vínculo por pedido ou sessão. Alterações nas regras de parcelamento e pagamento dependem do histórico da loja.",
@@ -140,16 +174,38 @@ export function diagnoseCampaignDecline(row: PaidMediaRow, reviews: Reviews, sou
   const weakPage = source.destinations.find(({ campaign, all }) => {
     const { previous, current } = campaign.previous && campaign.current ? campaign : all;
     return previous && current && Math.min(previous.sessions, current.sessions) >= 30 &&
-      ((previous.bounce !== null && current.bounce !== null && current.bounce - previous.bounce >= 0.08) ||
+      ((previous.bounce !== null && current.bounce !== null && current.bounce - previous.bounce >= 0.08 &&
+        current.purchaseRate <= previous.purchaseRate) ||
         (previous.purchases >= 4 && current.purchaseRate <= previous.purchaseRate * 0.75));
   });
   const specific = row.level !== "ad" ? inefficient?.ad.name : null;
-  const action = evaluation.decision === "pause" || evaluation.decision === "scale" ? evaluation.action : impaired
-    ? `Priorizar o destino ${impaired.name ?? impaired.path}. Destacar os produtos e variantes disponíveis e testar uma URL com grade completa no mesmo público.`
-    : weakPage ? `Priorizar ${weakPage.name ?? weakPage.path}. Testar uma página com oferta e produtos alinhados ao anúncio e comparar rejeição e compras por sessão.`
-      : evaluation.auction?.trend === "recovery" ? "Validar a reação em três dias comparáveis. Conferir compras por clique e cobertura da grade antes de avaliar escala."
-      : specific ? `Priorizar ${specific}. Testar uma variação de criativo e oferta com um destino de grade confirmada, no mesmo público.` : evaluation.action;
-  row.evaluation = { ...evaluation, diagnosis: { factors }, destinations: source.destinations, action, comparison: weeks ? {
+  let action = evaluation.action;
+  let followUp: string | undefined;
+  if (evaluation.decision === "investigate") {
+    if (impaired) {
+      action = `Priorizar o destino ${impaired.name ?? impaired.path}. Destacar os produtos e variantes disponíveis e testar uma URL com grade completa no mesmo público.`;
+      followUp = "Comparar compras por sessão e disponibilidade das variantes nos destinos testados.";
+    } else if (weakPage) {
+      const label = weakPage.name ?? (weakPage.path === "/" ? "página inicial" : weakPage.path);
+      action = `Testar uma página com oferta alinhada ao anúncio em vez de ${label}, preservando público, criativo e verba no comparativo.`;
+      followUp = "Medir rejeição, adições ao carrinho e compras por sessão na página atual e no novo destino.";
+    } else if (evaluation.auction?.trend === "recovery") {
+      action = "Validar a reação em três dias comparáveis. Conferir compras por clique e cobertura da grade antes de avaliar escala.";
+    } else if (weeklyDriver?.key === "cpm") {
+      action = "Comparar a entrega por público e posicionamento antes de subir a verba. Priorizar um teste com menor custo por visita e conservar a oferta e o destino.";
+      followUp = "Medir CPM, custo por clique e compras por clique com o mesmo criativo, em dias equivalentes.";
+    } else if (weeklyDriver?.key === "ctr") {
+      action = `Testar uma variação de criativo${specific ? ` em ${specific}` : ""} mantendo público, URL e oferta no comparativo.`;
+      followUp = "Comparar CTR de link e compras por clique com o criativo atual.";
+    } else if (weeklyDriver?.key === "ticket") {
+      action = "Testar uma oferta que favoreça um pedido de maior valor, com o mesmo público e orçamento.";
+      followUp = "Comparar valor atribuído por compra e volume de compras com a oferta atual.";
+    } else if (weeklyDriver?.key === "purchaseRate" || specific) {
+      action = `Testar uma oferta ou destino de grade confirmada${specific ? ` em ${specific}` : ""}, mantendo público, criativo e verba no comparativo.`;
+      followUp = "Comparar compras por clique e compras por sessão, com atenção às adições ao carrinho.";
+    }
+  }
+  row.evaluation = { ...evaluation, diagnosis: { factors, summary, followUp }, destinations: source.destinations, action, comparison: weeks ? {
     previousRoas: weeks.before, currentRoas: weeks.after, previousPurchases: weeks.previous.purchases, currentPurchases: weeks.current.purchases,
   } : undefined };
   row.action = action;

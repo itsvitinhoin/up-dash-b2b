@@ -25,7 +25,7 @@ type CampaignEvaluation = {
       gradeDays: number | null; coverageAtScale: number | null; firstSizeAtRisk: string | null; missing: string[];
       variants?: GradeVariant[]; linkedAds?: GradeLinkedAd[] }[] };
   decision: "maintain" | "investigate" | "scale" | "pause";
-  diagnosis?: { factors: { label: string; detail: string }[] };
+  diagnosis?: { factors: { label: string; detail: string }[]; summary?: string; followUp?: string };
   breakpoint?: { firstWeakPeriod: string; evidenceThrough: string; before: Dates & { roas: number | null }; after: Dates & { roas: number | null } };
   auction?: CampaignAuction;
   watch?: { kind: "grade" | "recovery" | "decline"; detail: string; action: string };
@@ -381,10 +381,13 @@ export function UpManagerPaidMedia({ review, learning, currency = "BRL", control
                   )}
                 </div>
                 {evaluation && <p className="mt-2 text-xs">
-                  {recommendation === "pause" ? evaluation.reason : evaluation.auction?.summary ?? evaluation.reason}
+                  {recommendation === "investigate" ? evaluation.diagnosis?.summary ?? evaluation.auction?.summary ?? evaluation.reason : evaluation.reason}
                 </p>}
                 {evaluation?.watch && <p className="mt-1 text-xs text-muted-foreground">{evaluation.watch.detail}</p>}
                 <p className="mt-2 text-xs font-medium">{row.action}</p>
+                {evaluation?.diagnosis?.followUp && (
+                  <p className="mt-1 text-xs text-muted-foreground">{evaluation.diagnosis.followUp}</p>
+                )}
                 {recommendation === "scale" && row.scaleBudgets?.some(({ blockers }) => !blockers.length) &&
                   <p className="mt-1 text-xs text-muted-foreground">Verba em {row.scaleBudgets.filter(({ blockers }) => !blockers.length)
                     .map(({ ownerLevel, ownerName }) => `${levelLabel[ownerLevel].toLowerCase()} · ${ownerName}`).join(" / ")}</p>}

@@ -7,6 +7,7 @@ import { buildCampaignEvaluation, buildCampaignWindows, campaignInventoryContext
 import { diagnoseCampaignDecline } from "./up-manager-campaign-diagnosis";
 import { readAgencyMediaBenchmark } from "./up-manager-media-benchmark";
 import { indexLandingEvidence, instrumentedLandingPages, landingEvidenceFor, managerDestinations } from "./up-manager-landing";
+import { buildStoreDecline } from "./up-manager-store-decline";
 import { enrichCroFinding } from "./up-manager-cro-diagnosis";
 import { readPublicAssortments } from "./up-manager-public-assortment";
 import { auctionReferencePeriods, buildAuctionSeasonality, evaluateAuction } from "./up-manager-auction";
@@ -72,7 +73,7 @@ import { readManagerShipping, shippingFinding } from "./up-manager-shipping-insi
 import { buildPaidMediaReview, resolveMediaActions, buildPaidMediaFinding, type PaidMediaRow } from "./up-manager-paid-media";
 import { combinePaidMediaChanges, evaluatePaidMediaChanges, readAppliedManagerMediaChanges, readPaidMediaChanges, readPaidMediaHistory, seedPaidMediaHistory } from "./up-manager-media-learning";
 
-export const B2C_VERSION = "up-b2c-v34";
+export const B2C_VERSION = "up-b2c-v35";
 
 function readManagerInputs<const T extends readonly (() => unknown)[]>(inputs: T, concurrency: number) {
   const workers: Promise<unknown>[] = Array.from({ length: Math.min(concurrency, inputs.length) }, () => Promise.resolve());
@@ -205,8 +206,8 @@ function decompose(
   funnel: Awaited<ReturnType<typeof readFunnel>>,
 ) {
   const { current, previous } = funnel;
-  if (metrics.averageOrder === null || prior.averageOrder === null) return null;
-  const ticket = metrics.orders * (metrics.averageOrder - prior.averageOrder);
+  if (prior.averageOrder === null || (metrics.averageOrder === null && metrics.orders > 0)) return null;
+  const ticket = metrics.averageOrder === null ? 0 : metrics.orders * (metrics.averageOrder - prior.averageOrder);
   const orderVolume = (metrics.orders - prior.orders) * prior.averageOrder;
   if (
     !current ||
@@ -654,6 +655,16 @@ export async function buildB2cReport(
         rankManagerProducts(selectedPrior, [], Infinity),
       )
     : null;
+  if (closedWithOrders) {
+    const revenueFinding = buildStoreDecline({
+      overview, bridge, funnel, period, reference, currency: client.currency, revenueContext,
+      catalogChanges: commercial.catalog, couponChanges: commercial.coupons?.length ?? null, shipping,
+      orders: { current, previous },
+      basketUnits: { current: selected.reduce((sum, item) => sum + item.units, 0),
+        previous: selectedPrior.reduce((sum, item) => sum + item.units, 0) },
+    });
+    if (revenueFinding) add(revenueFinding);
+  }
   let funnelEvaluation = evaluateManagerFunnel(
     funnel,
     current,
@@ -835,6 +846,7 @@ export async function buildB2cReport(
         current: currentFunnel,
         previous: previousFunnel,
         channels: funnel.channels,
+        channelComparison: funnel.channelComparison,
         products: funnel.products,
         evaluation: {
           payment: approval ? funnelEvaluation.payment : null,

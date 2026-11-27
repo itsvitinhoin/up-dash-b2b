@@ -23,7 +23,7 @@ export type CheckoutDiagnosticData = {
 };
 
 export type CheckoutDiagnosis = {
-  source: CheckoutDiagnosticData["source"] | "nuvemshop" | "meta";
+  source: CheckoutDiagnosticData["source"] | "nuvemshop" | "meta" | "loja";
   factors: { label: string; detail: string }[];
   unresolved: string;
   action: string;

@@ -26,3 +26,13 @@ it("atribui a maior contribuição da reação do Helena à compra por clique ap
   expect(evaluation.preceding?.purchases).toEqual(0);
   expect(evaluation.summary).toContain("maior contribuição veio de compras por clique");
 });
+
+it("separa custo de entrega e perda após o clique em janelas comparáveis", async () => {
+  const { auctionPoint, leadingRoasDriver } = await import("../src/services/up-manager-auction");
+  const base = { spend: 100, impressions: 10000, clicks: 100, purchases: 5, revenue: 1000 };
+  const week = campaignPeriod("2026-11-25", 7);
+  const before = auctionPoint(base, week);
+  expect(leadingRoasDriver(before, auctionPoint({ ...base, spend: 200 }, week), "decline")?.key).toBe("cpm");
+  expect(leadingRoasDriver(before, auctionPoint({ ...base, spend: 80, purchases: 0, revenue: 0 }, week), "decline")?.key).toBe("purchaseRate");
+  expect(leadingRoasDriver(before, auctionPoint({ ...base, revenue: 300 }, week), "decline")?.key).toBe("ticket");
+});

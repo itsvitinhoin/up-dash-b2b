@@ -64,6 +64,11 @@ export function buildManagerSectorMemory(
     report.product.inventory?.countedUnits, "count", "Leituras do catálogo entre diagnósticos.");
   add("Comercial", "Loja", "Faturamento aprovado", report.scope.commerceConfirmed ? overview.previous.approvedRevenue : null,
     report.scope.commerceConfirmed ? overview.metrics.approvedRevenue : null, "money", report.scope.comparison);
+  if (report.scope.commerceConfirmed) {
+    add("Comercial", "Loja", "Ticket médio", overview.previous.averageOrder, overview.metrics.averageOrder, "money", report.scope.comparison);
+    add("Funil", "Loja", "Sessões GA4", report.cro.previous?.sessions, report.cro.current?.sessions, "count", report.scope.comparison);
+    add("Funil", "Loja", "Compras GA4 por sessão", report.cro.previous?.purchasesPerSession, report.cro.current?.purchasesPerSession, "percent", report.scope.comparison);
+  }
   for (const stage of report.cro.evaluation.stages.filter(({ id }) => id !== "sessions")) {
     const valid = stage.movement !== "insufficient";
     add("Funil", stage.label, stage.id === "productViews" ? "Visualizações por sessão" : "Avanço de etapa",
