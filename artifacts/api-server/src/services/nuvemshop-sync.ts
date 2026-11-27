@@ -532,6 +532,69 @@ async function fetchOrderRefundedAmount(
 // fundo o bastante pra travar -- sem isso, nunca mais tentar um backfill
 // largo numa loja grande sem cair no mesmo problema.
 const NUVEMSHOP_ORDERS_CHUNK_DAYS = 30;
+// Achado 27/11/2026 (backfill da Lila Rosa): mesmo um pedaco de 30 dias pode
+// quebrar com Internal Server Error da Nuvemshop so num trecho especifico
+// dele (nao e so profundidade de paginacao -- reproduzido 2x seguidas na
+// mesma janela). Piso da bisseccao abaixo: nao vale a pena fatiar mais fino
+// que isso.
+const NUVEMSHOP_ORDERS_MIN_CHUNK_DAYS = 1;
+
+async function fetchOrdersInWindow(
+  storeId: string,
+  accessToken: string,
+  windowStart: Date,
+  windowEnd: Date,
+  maxPages?: number,
+): Promise<{ rows: NuvemshopOrder[]; pagesFetched: number; complete: boolean }> {
+  const rows: NuvemshopOrder[] = [];
+  let pagesFetched = 0;
+  let complete = true;
+  for (let page = 1; !maxPages || page <= maxPages; page++) {
+    const pageRows = await fetchNuvemshopPage<NuvemshopOrder>(storeId, accessToken, "/orders", {
+      page,
+      per_page: 200,
+      updated_at_min: windowStart.toISOString(),
+      updated_at_max: windowEnd.toISOString(),
+    });
+    pagesFetched++;
+    rows.push(...pageRows);
+    if (pageRows.length < 200) break;
+    if (maxPages && page >= maxPages) complete = false;
+  }
+  return { rows, pagesFetched, complete };
+}
+
+// Em falha, bissecciona a janela em vez de descartar o pedaco de 30 dias
+// inteiro -- isola so o sub-trecho que realmente quebra (registrado em
+// chunkErrors) e preserva os pedidos dos sub-trechos que funcionam.
+async function fetchOrdersWithBisection(
+  storeId: string,
+  accessToken: string,
+  windowStart: Date,
+  windowEnd: Date,
+  maxPages: number | undefined,
+  chunkErrors: string[],
+): Promise<{ rows: NuvemshopOrder[]; pagesFetched: number; complete: boolean }> {
+  try {
+    return await fetchOrdersInWindow(storeId, accessToken, windowStart, windowEnd, maxPages);
+  } catch (error) {
+    const spanDays = (windowEnd.getTime() - windowStart.getTime()) / (24 * 60 * 60 * 1000);
+    if (spanDays <= NUVEMSHOP_ORDERS_MIN_CHUNK_DAYS) {
+      chunkErrors.push(
+        `${windowStart.toISOString().slice(0, 10)} a ${windowEnd.toISOString().slice(0, 10)}: ${error instanceof Error ? error.message : String(error)}`,
+      );
+      return { rows: [], pagesFetched: 0, complete: false };
+    }
+    const mid = new Date(windowStart.getTime() + (windowEnd.getTime() - windowStart.getTime()) / 2);
+    const older = await fetchOrdersWithBisection(storeId, accessToken, windowStart, mid, maxPages, chunkErrors);
+    const newer = await fetchOrdersWithBisection(storeId, accessToken, mid, windowEnd, maxPages, chunkErrors);
+    return {
+      rows: [...older.rows, ...newer.rows],
+      pagesFetched: older.pagesFetched + newer.pagesFetched,
+      complete: older.complete && newer.complete,
+    };
+  }
+}
 
 async function fetchOrders(
   storeId: string,
@@ -556,37 +619,15 @@ async function fetchOrders(
       chunkEnd.getTime() - NUVEMSHOP_ORDERS_CHUNK_DAYS * 24 * 60 * 60 * 1000,
       stopAt.getTime(),
     ));
-    let chunkRows = 0;
-    try {
-      for (let page = 1; !maxPages || page <= maxPages; page++) {
-        const rows = await fetchNuvemshopPage<NuvemshopOrder>(storeId, accessToken, "/orders", {
-          page,
-          per_page: 200,
-          updated_at_min: chunkStart.toISOString(),
-          updated_at_max: chunkEnd.toISOString(),
-        });
-        pagesFetched++;
-        orders.push(...rows);
-        chunkRows += rows.length;
-        if (rows.length < 200) break;
-        if (maxPages && page >= maxPages) complete = false;
-      }
-    } catch (error) {
-      // Achado 23/11/2026: um pedaco de tempo pode falhar sozinho (ex: erro
-      // pontual da Nuvemshop numa janela especifica, mesmo com o pedaco ja
-      // pequeno) -- registra e segue pro pedaco mais antigo, em vez de jogar
-      // fora os pedidos que os OUTROS pedacos ja buscaram com sucesso (antes,
-      // uma falha em qualquer pedaco descartava a busca inteira).
-      chunkErrors.push(
-        `${chunkStart.toISOString().slice(0, 10)} a ${chunkEnd.toISOString().slice(0, 10)}: ${error instanceof Error ? error.message : String(error)}`,
-      );
-      complete = false;
-      chunkEnd = chunkStart;
-      continue;
-    }
+    const chunkResult = await fetchOrdersWithBisection(storeId, accessToken, chunkStart, chunkEnd, maxPages, chunkErrors);
+    pagesFetched += chunkResult.pagesFetched;
+    orders.push(...chunkResult.rows);
+    if (!chunkResult.complete) complete = false;
     // Sem `since` (historico completo): pedaco sem nenhum pedido = ja passou
-    // do inicio real da loja, nao precisa continuar descendo.
-    if (!since && chunkRows === 0) break;
+    // do inicio real da loja, nao precisa continuar descendo. So vale se o
+    // pedaco realmente terminou sem erro -- um pedaco com falha pode devolver
+    // 0 pedidos sem que isso signifique "fim da loja".
+    if (!since && chunkResult.rows.length === 0 && chunkResult.complete) break;
     chunkEnd = chunkStart;
   }
   return { rows: orders, pagesFetched, complete, chunkErrors };
