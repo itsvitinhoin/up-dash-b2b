@@ -26,3 +26,5 @@ export * from "./braavo";
 
 export * from "./bling";
 export * from "./googleAds";
+export * from "./productCampaignChecks";
+export * from "./upManager";

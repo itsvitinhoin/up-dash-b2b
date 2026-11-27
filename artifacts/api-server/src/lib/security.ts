@@ -5,32 +5,37 @@ export function buildCorsOptions(): CorsOptions {
   const raw = process.env.ALLOWED_ORIGINS?.trim();
   const isProd = process.env.NODE_ENV === "production";
 
-  if (isProd) {
-    if (!raw || raw === "*") {
-      throw new Error(
-        "ALLOWED_ORIGINS must be a concrete comma-separated allowlist in production",
-      );
-    }
-    const allowList = raw.split(",").map((s) => s.trim()).filter(Boolean);
-    return {
-      credentials: true,
-      origin(origin, callback) {
-        if (!origin) return callback(null, true);
-        if (allowList.includes(origin)) return callback(null, true);
-        callback(new Error(`Origin not allowed by CORS: ${origin}`));
-      },
-    };
+  if (isProd && (!raw || raw === "*")) {
+    throw new Error(
+      "ALLOWED_ORIGINS must be a concrete comma-separated allowlist in production",
+    );
   }
 
   if (!raw || raw === "*") {
     return { origin: true, credentials: true };
   }
-  const allowList = raw.split(",").map((s) => s.trim()).filter(Boolean);
+  const allowList = new Set(
+    raw
+      .split(",")
+      .map((value) => value.trim())
+      .filter(Boolean),
+  );
+  // A staged production build uses its unique Vercel URL before it has a custom alias.
+  // Keep the exception scoped to the exact hostname provided by this deployment.
+  const vercelHost = process.env.VERCEL_URL;
+  if (
+    isProd &&
+    process.env.VERCEL === "1" &&
+    vercelHost &&
+    /^[a-z0-9-]+\.vercel\.app$/.test(vercelHost)
+  ) {
+    allowList.add(`https://${vercelHost}`);
+  }
   return {
     credentials: true,
     origin(origin, callback) {
       if (!origin) return callback(null, true);
-      if (allowList.includes(origin)) return callback(null, true);
+      if (allowList.has(origin)) return callback(null, true);
       callback(new Error(`Origin not allowed by CORS: ${origin}`));
     },
   };

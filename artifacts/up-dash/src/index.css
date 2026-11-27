@@ -355,3 +355,10 @@
     border-color: hsl(220 22% 16%) !important;
   }
 }
+
+
+@keyframes manager-flow {
+  0% { opacity: 0; stroke-dashoffset: 90; }
+  15%, 85% { opacity: 1; }
+  100% { opacity: 0; stroke-dashoffset: 0; }
+}

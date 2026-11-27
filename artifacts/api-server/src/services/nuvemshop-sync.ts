@@ -1,3 +1,4 @@
+import { PROVINCE_TO_STATE } from "../lib/brazilian-states";
 import { variantAttributesFromValues } from "./variant-attributes";
 import { and, eq, sql } from "drizzle-orm";
 import {
@@ -22,9 +23,11 @@ export interface NuvemshopSyncResult {
   productsFetched: number;
   productPagesFetched: number;
   productPaginationComplete: boolean;
+  catalogComplete: boolean | null;
   ordersFetched: number;
   orderPagesFetched: number;
   orderPaginationComplete: boolean;
+  ordersComplete: boolean;
   orderItemsSynced: number;
   eventsSynced: number;
   cancelledOrders: number;
@@ -138,46 +141,6 @@ type NuvemshopTransaction = {
   refunded_amount?: NuvemshopMoney;
 };
 
-const PROVINCE_TO_STATE: Record<string, string> = {
-  acre: "AC",
-  alagoas: "AL",
-  amapá: "AP",
-  amapa: "AP",
-  amazonas: "AM",
-  bahia: "BA",
-  ceará: "CE",
-  ceara: "CE",
-  "distrito federal": "DF",
-  "espírito santo": "ES",
-  "espirito santo": "ES",
-  goiás: "GO",
-  goias: "GO",
-  maranhão: "MA",
-  maranhao: "MA",
-  "minas gerais": "MG",
-  "mato grosso": "MT",
-  "mato grosso do sul": "MS",
-  pará: "PA",
-  para: "PA",
-  paraíba: "PB",
-  paraiba: "PB",
-  paraná: "PR",
-  parana: "PR",
-  pernambuco: "PE",
-  piauí: "PI",
-  piaui: "PI",
-  "rio de janeiro": "RJ",
-  "rio grande do norte": "RN",
-  "rio grande do sul": "RS",
-  rondônia: "RO",
-  rondonia: "RO",
-  roraima: "RR",
-  "santa catarina": "SC",
-  "são paulo": "SP",
-  "sao paulo": "SP",
-  sergipe: "SE",
-  tocantins: "TO",
-};
 
 function emptyResult(): NuvemshopSyncResult {
   return {
@@ -190,9 +153,11 @@ function emptyResult(): NuvemshopSyncResult {
     productsFetched: 0,
     productPagesFetched: 0,
     productPaginationComplete: true,
+    catalogComplete: null,
     ordersFetched: 0,
     orderPagesFetched: 0,
-    orderPaginationComplete: true,
+    orderPaginationComplete: false,
+    ordersComplete: false,
     orderItemsSynced: 0,
     eventsSynced: 0,
     cancelledOrders: 0,
@@ -326,54 +291,63 @@ async function loadCustomerIndex(clientId: string): Promise<CustomerIndex> {
   return index;
 }
 
-async function upsertItemProduct(
+async function upsertNuvemshopProduct(
   clientId: string,
   index: ProductIndex,
-  input: { externalId: string; sku: string; name: string; category: string | null; price: number; imageUrl: string | null },
+  input: {
+    externalId: string;
+    sku: string;
+    name: string;
+    category: string | null;
+    price: number;
+    imageUrl: string | null;
+    stock?: number;
+    status?: "ACTIVE";
+  },
 ): Promise<{ id: string; wasInserted: boolean } | undefined> {
-  const own = index.byExternalId.get(input.externalId);
-  const owner = index.externalIdBySku.get(input.sku);
-  const takenByOther = owner !== undefined && owner !== input.externalId;
-  // SKU livre (ou do proprio produto): grava como sempre. SKU de outro: o produto que ja existe mantem o SKU dele; o novo ganha um derivado.
-  const safeSku = own ? own.sku : collisionSku(input.sku, input.externalId);
-  const wanted = takenByOther ? safeSku : input.sku;
+  const { externalId, sku: sourceSku, ...fields } = input;
+  const chooseSku = () => {
+    const isTaken = (sku: string) => index.externalIdBySku.has(sku) &&
+      index.externalIdBySku.get(sku) !== externalId;
+    if (!isTaken(sourceSku)) return sourceSku;
+    const own = index.byExternalId.get(externalId);
+    if (own) return own.sku;
 
+    const alias = collisionSku(sourceSku, externalId);
+    let sku = alias;
+    for (let suffix = 2; isTaken(sku); suffix++) sku = `${alias}-${suffix}`;
+    return sku;
+  };
   const write = async (sku: string) => {
     const [row] = await db
       .insert(productsTable)
-      .values({
-        clientId,
-        externalId: input.externalId,
-        sku,
-        name: input.name,
-        category: input.category,
-        price: input.price,
-        imageUrl: input.imageUrl,
-      })
+      .values({ clientId, externalId, sku, ...fields })
       .onConflictDoUpdate({
         // externalId (product_id:variant_id da Nuvemshop) e o identificador estavel; o sku pode ser reatribuido pelo lojista (ver
         // investigacao 2026-09-17).
         target: [productsTable.clientId, productsTable.externalId],
-        set: { sku, name: input.name, category: input.category, price: input.price, imageUrl: input.imageUrl },
+        set: { sku, ...fields },
       })
       .returning({ id: productsTable.id, wasInserted: sql<boolean>`(xmax = 0)` });
     return row;
   };
 
-  let used = wanted;
+  let used = chooseSku();
   let row: { id: string; wasInserted: boolean } | undefined;
   try {
-    row = await write(wanted);
+    row = await write(used);
   } catch (error) {
-    // Leitura desatualizada: outro processo criou esse SKU depois que carreguei os produtos. Tenta uma vez com o SKU seguro.
-    if (!isSkuConflict(error) || safeSku === wanted) throw error;
-    used = safeSku;
-    row = await write(safeSku);
+    // Another sync may assign the SKU after we read the index.
+    if (!isSkuConflict(error)) throw error;
+    Object.assign(index, await loadProductIndex(clientId));
+    used = chooseSku();
+    row = await write(used);
   }
   if (row) {
-    if (own && own.sku !== used && index.externalIdBySku.get(own.sku) === input.externalId) index.externalIdBySku.delete(own.sku);
-    index.externalIdBySku.set(used, input.externalId);
-    index.byExternalId.set(input.externalId, { id: row.id, sku: used });
+    const own = index.byExternalId.get(externalId);
+    if (own && own.sku !== used && index.externalIdBySku.get(own.sku) === externalId) index.externalIdBySku.delete(own.sku);
+    index.externalIdBySku.set(used, externalId);
+    index.byExternalId.set(externalId, { id: row.id, sku: used });
   }
   return row;
 }
@@ -678,121 +652,49 @@ async function syncProductCatalog(params: {
     );
   }
 
-  // Achado 23/11/2026 (reativando o catalogo apos SKIP_CATALOG=1 ficar meses ligado):
-  // mesmo SKU repetido entre produtos diferentes (Hot Pink/Lila Rosa/Jini, ver
-  // investigacao 2026-09-17 abaixo) que upsertItemProduct ja sabe contornar --
-  // esse loop so tinha o try/catch simples, sem a logica de SKU seguro, entao a
-  // variante que perdia a corrida ficava presa com dado velho pra sempre. Mesmo
-  // indice/funcoes que upsertItemProduct usa (ProductIndex/collisionSku/isSkuConflict).
-  const productIndex = await loadProductIndex(params.clientId);
-
+  const index = await loadProductIndex(params.clientId);
   for (const product of products) {
     try {
       const productId = product.id ? String(product.id) : null;
-      const variants = product.variants && product.variants.length > 0 ? product.variants : [{ id: productId, sku: productId }] as NuvemshopVariant[];
+      const variants = product.variants?.length ? product.variants : [{ id: productId, sku: productId }];
       const productName = localized(product.name) || `Produto ${productId ?? ""}`.trim();
       const category = categoryName(product.categories);
-      const variantsBySku = new Map<string, {
-        externalId: string;
-        name: string;
-        price: number;
-        stock: number;
-        imageUrl: string | null;
-      }>();
+      const seenVariants = new Set<string>();
 
       for (const variant of variants) {
         const sku = skuForVariant(product, variant);
         const variantId = variant.id ? String(variant.id) : sku;
         const externalId = productId ? `${productId}:${variantId}` : variantId;
-        const label = variantLabel(variant);
-        const stock = stockForVariant(variant);
-        const existing = variantsBySku.get(sku);
-        if (existing) {
-          existing.stock += stock;
-          existing.externalId = productId ? productId : existing.externalId;
-          continue;
-        }
-        variantsBySku.set(sku, {
-          externalId,
-          name: label ? `${productName} - ${label}` : productName,
-          price: asNumber(variant.promotional_price) || asNumber(variant.price) || asNumber(variant.compare_at_price),
-          stock,
-          imageUrl: imageForVariant(product, variant),
-        });
-      }
-
-      for (const [sku, row] of variantsBySku.entries()) {
-        // externalId (product_id:variant_id da Nuvemshop) e o identificador
-        // estavel -- o sku pode ser reatribuido pelo lojista ao longo do
-        // tempo. Resolver conflito por sku deixava o upsert tentar um INSERT
-        // puro quando o sku mudava, colidindo na constraint de externalId em
-        // vez de atualizar a linha certa. Mesmo assim, alguns catalogos tem
-        // sku duplicado entre produtos diferentes de verdade (ver
-        // investigacao 2026-09-17) -- por isso o SKU seguro/retry abaixo,
-        // igual upsertItemProduct ja faz pro lado do pedido.
-        const own = productIndex.byExternalId.get(row.externalId);
-        const owner = productIndex.externalIdBySku.get(sku);
-        const takenByOther = owner !== undefined && owner !== row.externalId;
-        const safeSku = own ? own.sku : collisionSku(sku, row.externalId);
-        const wanted = takenByOther ? safeSku : sku;
-
-        const write = async (skuToUse: string) => {
-          const [row_] = await db
-            .insert(productsTable)
-            .values({
-              clientId: params.clientId,
-              externalId: row.externalId,
-              sku: skuToUse,
-              name: row.name,
-              category,
-              price: row.price,
-              stock: row.stock,
-              imageUrl: row.imageUrl,
-              status: "ACTIVE",
-            })
-            .onConflictDoUpdate({
-              target: [productsTable.clientId, productsTable.externalId],
-              set: {
-                sku: skuToUse,
-                name: row.name,
-                category,
-                price: row.price,
-                stock: row.stock,
-                imageUrl: row.imageUrl,
-                status: "ACTIVE",
-              },
-            })
-            .returning({ id: productsTable.id, wasInserted: sql<boolean>`(xmax = 0)` });
-          return row_;
-        };
-
-        let used = wanted;
+        // Keep each source variant distinct even when multiple sizes have the same SKU.
+        if (seenVariants.has(externalId)) continue;
+        seenVariants.add(externalId);
         try {
-          let upserted;
-          try {
-            upserted = await write(wanted);
-          } catch (variantError) {
-            if (!isSkuConflict(variantError) || safeSku === wanted) throw variantError;
-            used = safeSku;
-            upserted = await write(safeSku);
-          }
+          const label = variantLabel(variant);
+          const upserted = await upsertNuvemshopProduct(params.clientId, index, {
+            externalId,
+            sku,
+            name: label ? `${productName} - ${label}` : productName,
+            category,
+            price: asNumber(variant.promotional_price) || asNumber(variant.price) || asNumber(variant.compare_at_price),
+            stock: stockForVariant(variant),
+            imageUrl: imageForVariant(product, variant),
+            status: "ACTIVE",
+          });
           if (upserted?.wasInserted) params.result.productsCreated++;
-          else params.result.productsUpdated++;
-          if (upserted) {
-            if (own && own.sku !== used && productIndex.externalIdBySku.get(own.sku) === row.externalId) productIndex.externalIdBySku.delete(own.sku);
-            productIndex.externalIdBySku.set(used, row.externalId);
-            productIndex.byExternalId.set(row.externalId, { id: upserted.id, sku: used });
-          }
-        } catch (variantError) {
+          else if (upserted) params.result.productsUpdated++;
+        } catch (error) {
           params.result.errors.push(
-            `Product ${product.id ?? "unknown"} variant ${sku}: ${variantError instanceof Error ? variantError.message : String(variantError)}`,
+            `Product ${productId ?? "unknown"} variant ${sku}: ${error instanceof Error ? error.message : String(error)}`,
           );
         }
       }
     } catch (error) {
-      params.result.errors.push(`Product ${product.id ?? "unknown"}: ${error instanceof Error ? error.message : String(error)}`);
+      params.result.errors.push(
+        `Product ${product?.id ?? "unknown"}: ${error instanceof Error ? error.message : String(error)}`,
+      );
     }
   }
+  return index;
 }
 
 export async function syncNuvemshopClient(params: {
@@ -805,9 +707,10 @@ export async function syncNuvemshopClient(params: {
   skipCatalog?: boolean;
 }): Promise<NuvemshopSyncResult> {
   const result = emptyResult();
+  let productIndex: ProductIndex | undefined;
   if (!params.skipCatalog) {
     try {
-      await syncProductCatalog({
+      productIndex = await syncProductCatalog({
         clientId: params.clientId,
         storeId: params.storeId,
         accessToken: params.accessToken,
@@ -817,7 +720,9 @@ export async function syncNuvemshopClient(params: {
     } catch (error) {
       result.errors.push(`Product catalog: ${error instanceof Error ? error.message : String(error)}`);
     }
+    result.catalogComplete = result.productPaginationComplete && result.errors.length === 0;
   }
+  const catalogErrorCount = result.errors.length;
   let orders: NuvemshopOrder[] = [];
   try {
     const orderPage = await fetchOrders(params.storeId, params.accessToken, params.since, params.maxPages);
@@ -839,7 +744,6 @@ export async function syncNuvemshopClient(params: {
     return result;
   }
   const productDetailsCache = new Map<string, Promise<NuvemshopProductDetails | null>>();
-  let productIndex: ProductIndex | undefined;
   const customerIndex = await loadCustomerIndex(params.clientId);
 
   for (const order of orders) {
@@ -1009,10 +913,8 @@ export async function syncNuvemshopClient(params: {
         const netUnitPrice = Math.max(0, (itemGross - itemDiscount) / quantity);
 
         try {
-          // Alguns catalogos (ex: Hot Pink, Lila Rosa, Jini) tem sku repetido entre variantes/produtos diferentes: upsertItemProduct da SKU
-          // proprio a quem chega depois. O try/catch continua: um item com dado inconsistente nao pode abortar o resto do pedido.
           productIndex ??= await loadProductIndex(params.clientId);
-          const product = await upsertItemProduct(params.clientId, productIndex, {
+          const product = await upsertNuvemshopProduct(params.clientId, productIndex, {
             externalId: productExternalId,
             sku,
             name: productName,
@@ -1116,5 +1018,8 @@ export async function syncNuvemshopClient(params: {
     WHERE c.id = s.customer_id AND c.client_id = ${params.clientId}
   `);
 
+  result.ordersComplete = result.orderPaginationComplete &&
+    result.ordersCreated + result.ordersUpdated === result.ordersFetched &&
+    result.errors.length === catalogErrorCount;
   return result;
 }

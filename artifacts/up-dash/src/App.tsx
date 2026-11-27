@@ -47,6 +47,8 @@ import NotificationsPage from "@/pages/notifications";
 import ComparePage from "@/pages/compare";
 import OverviewPage from "@/pages/overview";
 import MarketingPage from "@/pages/marketing";
+import UpManagerPage from "@/pages/up-manager";
+import BrainPage from "@/pages/brain";
 import WhatsappPage from "@/pages/whatsapp";
 import WhatsappConversationsPage from "@/pages/whatsapp-conversations";
 import WhatsappConnectionsPage from "@/pages/whatsapp-connections";
@@ -328,6 +330,22 @@ function Router() {
               <PageTransition routeKey="automatic-reports">
                 <AutomaticReportsPage />
               </PageTransition>
+            </AppLayout>
+          </AuthGuard>
+        </Route>
+
+        <Route path="/up-manager">
+          <AuthGuard>
+            <AppLayout>
+              <PageTransition routeKey="up-manager"><UpManagerPage /></PageTransition>
+            </AppLayout>
+          </AuthGuard>
+        </Route>
+
+        <Route path="/brain">
+          <AuthGuard>
+            <AppLayout>
+              <PageTransition routeKey="brain"><BrainPage /></PageTransition>
             </AppLayout>
           </AuthGuard>
         </Route>

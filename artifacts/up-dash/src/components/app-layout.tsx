@@ -8,7 +8,7 @@ import {
 } from "react";
 import { Link, useLocation } from "wouter";
 import { useIsFetching } from "@tanstack/react-query";
-import { Globe2 } from "lucide-react";
+import { BrainCircuit, Globe2 } from "lucide-react";
 import {
   differenceInCalendarDays,
   format,
@@ -16,6 +16,7 @@ import {
   subDays,
 } from "date-fns";
 import { useAuth } from "@/lib/auth";
+import { useUpManagerBrands } from "@/lib/up-manager-pilot";
 import { queryOpts } from "@/lib/query-opts";
 import { useTheme } from "@/components/theme-provider";
 import { useDashboardFilters } from "@/lib/dashboard-filters";
@@ -124,6 +125,8 @@ interface PageMeta {
 }
 
 const pageMeta: Record<string, PageMeta> = {
+  "/up-manager": { title: "Up Manager", subtitle: "", hasDateRange: true, hasFilterBar: false },
+  "/brain": { title: "Brain", subtitle: "", hasDateRange: false, hasFilterBar: false },
   "/": {
     title: "Visão geral",
     subtitle: "",
@@ -578,6 +581,7 @@ export function AppLayout({ children }: AppLayoutProps) {
     selectedDashboardMode,
     setSelectedDashboardMode,
   } = useAuth();
+  const managerBrands = useUpManagerBrands().data ?? [];
   const { theme, setTheme } = useTheme();
   const { language, t, tx } = useI18n();
   const { dateRange, setDateRange } = useDashboardFilters();
@@ -1229,6 +1233,13 @@ export function AppLayout({ children }: AppLayoutProps) {
     });
   }
 
+  const hasManagerNav = (user?.role === "ADMIN" && managerBrands.length > 0) ||
+    managerBrands.some(({ id }) => id === user?.clientId);
+  if (hasManagerNav) workspaceNav.unshift(
+    { name: "UP Manager", href: "/up-manager", icon: Sparkles },
+    { name: "Brain", href: "/brain", icon: BrainCircuit },
+  );
+
   const renderNavItem = (item: NavEntry, scope: string) => {
     const navLocation = navigationPath(location);
     const isActive =
@@ -1246,6 +1257,15 @@ export function AppLayout({ children }: AppLayoutProps) {
         <div className={`up-nav-row ${isActive ? "is-active" : ""}`}>
           <Link
             href={item.href}
+            onClick={() => {
+              const isManagerPage = item.href === "/up-manager" || item.href === "/brain";
+              if (user?.role === "ADMIN" && isManagerPage && selectedDashboardMode !== "B2C") {
+                setSelectedDashboardMode("B2C");
+                if (selectedClientId && managerBrands.some(({ id }) => id === selectedClientId)) {
+                  setSelectedClientId(selectedClientId);
+                }
+              }
+            }}
             aria-current={isActive ? "page" : undefined}
             data-testid={`nav-${item.href.replace(/^\//, "").replace(/\//g, "-") || "dashboard"}`}
             className="up-nav-link"
@@ -1315,23 +1335,15 @@ export function AppLayout({ children }: AppLayoutProps) {
         aria-label={tx("Navegação principal")}
         className="up-nav flex-1 space-y-6 overflow-y-auto"
       >
-        <div>
-          <p className="up-nav-label">{t("nav.analytics", "Análises")}</p>
+        {[
+          { title: t("nav.analytics", "Análises"), items: analyticsNav },
+          { title: t("nav.workspace", "Gestão"), items: workspaceNav },
+        ].map(({ title, items }) => <div key={title}>
+          <p className="up-nav-label">{title}</p>
           <div className="space-y-0.5">
-            {analyticsNav.map((item) => (
-              <div key={item.href}>{renderNavItem(item, scope)}</div>
-            ))}
+            {items.map((item) => <div key={item.href}>{renderNavItem(item, scope)}</div>)}
           </div>
-        </div>
-
-        <div>
-          <p className="up-nav-label">{t("nav.workspace", "Gestão")}</p>
-          <div className="space-y-0.5">
-            {workspaceNav.map((item) => (
-              <div key={item.href}>{renderNavItem(item, scope)}</div>
-            ))}
-          </div>
-        </div>
+        </div>)}
       </nav>
 
       <div className="up-sidebar-footer up-glass-panel">
