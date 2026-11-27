@@ -61,7 +61,8 @@ const showRoas = (value: number) => `${label.format(value)}×`;
 
 export function leadingRoasDriver(before: AuctionPoint, current: AuctionPoint, direction: "decline" | "recovery") {
   if (before.purchaseRate !== null && current.purchaseRate !== null &&
-    (before.purchaseRate === 0) !== (current.purchaseRate === 0)) {
+    (direction === "decline" ? before.purchaseRate > 0 && current.purchaseRate === 0 :
+      before.purchaseRate === 0 && current.purchaseRate > 0)) {
     return { key: "purchaseRate" as const, name: "compras por clique", before: before.purchaseRate, current: current.purchaseRate };
   }
   return ([

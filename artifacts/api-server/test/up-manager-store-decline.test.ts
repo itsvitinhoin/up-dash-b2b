@@ -34,7 +34,7 @@ it("prioriza o canal que perdeu tráfego quando a conversão total não puxou a 
       current: [{ name: "Direct", traffic: 100, purchases: 6, engaged: 65, carts: 11, checkouts: 8 }],
     } },
   });
-  expect(result?.evidence).toContain("Volume de sessões");
+  expect(result?.evidence).toContain("volume de sessões");
   expect(result?.action).toContain("Social Pago");
   expect(result?.followUp).toContain("custo por visita");
   expect(result?.diagnosis?.factors).toContainEqual(expect.objectContaining({
@@ -46,10 +46,10 @@ it("prioriza o ticket com pedidos estáveis e marca uma amostra pequena", () => 
   const result = buildStoreDecline({
     ...input,
     overview: { ...input.overview, metrics: metrics(600, 2), previous: metrics(1000, 2) },
-    bridge: { orderVolume: 0, ticket: -400, traffic: null, ordersPerSession: null },
+    bridge: { orderVolume: 0, ticket: -400, traffic: 1000, ordersPerSession: -1000 },
   });
   expect(result?.priority).toBe("P2");
-  expect(result?.evidence).toContain("Ticket médio");
+  expect(result?.evidence).toContain("ticket médio");
   expect(result?.action).toContain("ticket maior");
   expect(result?.followUp).toContain("grupo de controle");
 });

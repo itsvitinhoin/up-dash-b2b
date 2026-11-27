@@ -15,6 +15,7 @@ const pct = new Intl.NumberFormat("pt-BR", { style: "percent", maximumFractionDi
 const ratio = (part: number, total: number) => total > 0 ? part / total : null;
 const rate = (value: number | null) => value === null ? "indisponível" : pct.format(value);
 const showDays = ({ dateFrom, dateTo }: ManagerPeriod) => dateFrom === dateTo ? dateTo : `${dateFrom} a ${dateTo}`;
+const paidChannels = new Set(["Paid Social", "Paid Search", "Paid Shopping", "Paid Video", "Paid Other", "Display", "Cross-network"]);
 const channelLabels: Record<string, string> = {
   "Paid Social": "Social Pago", "Organic Social": "Social Orgânico",
   "Paid Search": "Busca Paga", "Organic Search": "Busca Orgânica", Direct: "Direto",
@@ -31,7 +32,7 @@ function compareChannels(data: Funnel["channelComparison"]) {
     const beforeRate = before.purchases / before.traffic;
     const currentRate = ratio(current.purchases, current.traffic);
     const sessionsLost = before.traffic - current.traffic;
-    return [{ name: channelLabels[before.name] ?? before.name, sessionsLost,
+    return [{ name: channelLabels[before.name] ?? before.name, paid: paidChannels.has(before.name), sessionsLost,
       purchaseLossFromTraffic: sessionsLost * beforeRate,
       purchaseLossFromRate: currentRate === null ? 0 : current.traffic * (beforeRate - currentRate),
       beforeRate, currentRate, before, current,
@@ -73,10 +74,14 @@ export function buildStoreDecline(input: {
     { name: "Pedidos aprovados por sessão", impact: bridge?.ordersPerSession, key: "rate" },
     { name: "Volume de pedidos", impact: bridge?.traffic == null ? bridge?.orderVolume : null, key: "orders" },
   ];
-  const primary = components.filter(({ impact }) => impact != null && impact < 0)
-    .sort((a, b) => a.impact! - b.impact!)[0];
+  // Traffic and conversion can offset each other. Compare their net order effect
+  // against the ticket before choosing which part of the drop to address.
+  const primary = bridge && bridge.ticket < Math.min(0, bridge.orderVolume)
+    ? components[0]
+    : components.slice(1).filter(({ impact }) => impact != null && impact < 0)
+      .sort((a, b) => a.impact! - b.impact!)[0];
   const smallSample = previous.orders < 5 || (metrics.orders > 0 && metrics.orders < 5);
-  const evidence = `${money.format(previous.approvedRevenue)} → ${money.format(metrics.approvedRevenue)} (${pct.format(delta / previous.approvedRevenue)}). ${primary ? `${primary.name} foi a maior contribuição negativa estimada (${money.format(primary.impact!)}).` : "Os pedidos e o ticket estão disponíveis para comparação."}`;
+  const evidence = `${money.format(previous.approvedRevenue)} → ${money.format(metrics.approvedRevenue)} (${pct.format(delta / previous.approvedRevenue)}). ${primary ? `O maior impacto estimado veio de ${primary.name.toLowerCase()} (${money.format(primary.impact!)}).` : "Os pedidos e o ticket estão disponíveis para comparação."}`;
   const factors = [{ label: "Volume e ticket da loja", detail: `${count.format(previous.orders)} → ${count.format(metrics.orders)} pedidos aprovados e ticket de ${value(previous.averageOrder)} → ${value(metrics.averageOrder)}. ${periods}.${smallSample ? " Amostra pequena de pedidos." : ""}` }];
   if (bridge) factors.push({ label: "Contribuições estimadas para a receita",
     detail: components.flatMap(({ name, impact }) => impact == null ? [] : [`${name}: ${money.format(impact)}`]).join(" · ") +
@@ -111,10 +116,12 @@ export function buildStoreDecline(input: {
   const action = primary?.key === "ticket"
     ? `Testar uma vitrine ou combinação com ticket maior e grade disponível${item ? `, começando pela linha de ${item.name}` : ""}. Manter a oferta atual como comparação.`
     : primary?.key === "traffic"
-      ? `Priorizar ${lostTraffic?.name ?? "a origem de tráfego que perdeu alcance"}. Comparar criativos, distribuição e custo por visita, preservando o destino atual durante o teste.`
-      : `Testar mensagem e página de destino em ${lostPurchases?.name ?? "um recorte com perda de compras"}, com o mesmo público e verba. Usar os itens de maior perda para escolher uma oferta comparável com grade disponível.`;
+      ? lostTraffic?.paid
+        ? `Priorizar ${lostTraffic.name}. Comparar criativos, distribuição e custo por visita, preservando o destino atual durante o teste.`
+        : `Priorizar ${lostTraffic?.name ?? "a origem que perdeu tráfego"}. Comparar quais páginas de entrada perderam sessões e recuperar exposição nos destinos que mais convertem.`
+      : `Testar mensagem e página de destino em ${lostPurchases?.name ?? "um recorte com perda de compras"}${lostPurchases?.paid ? ", preservando público e verba" : ""}. Usar os itens de maior perda para escolher uma oferta comparável com grade disponível.`;
   const followUp = primary?.key === "ticket" ? "Comparar ticket, unidades e receita por pedido com o grupo de controle."
-    : primary?.key === "traffic" ? "Comparar sessões qualificadas, custo por visita e pedidos aprovados em janelas equivalentes."
+    : primary?.key === "traffic" ? `Comparar sessões qualificadas${lostTraffic?.paid ? ", custo por visita" : ""} e pedidos aprovados em janelas equivalentes.`
       : "Comparar compras por sessão, avanço para carrinho e pedidos aprovados com a página atual.";
   return {
     id: "store-revenue-decline", title: "O que puxou a queda de faturamento",
