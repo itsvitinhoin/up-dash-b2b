@@ -25,6 +25,7 @@
  *                                  (BRAAVO_JOB_MAX_MINUTES muda o orçamento; BRAAVO_FULL_REFRESH_DAYS, o intervalo da recarga completa;
  *                                  BRAAVO_JOB_MODE=backfill processa só lojas sem carga completa concluída)
  *   TASK=daily_metrics         -> recalcula métricas diárias agregadas
+ *   TASK=up_manager_daily      -> diagnóstico B2C diário da loja piloto, no dia anterior em São Paulo
  *   TASK=ga4_daily             -> sessões/eventos diários do GA4 -> ga4_daily_metrics
  *     (LOOKBACK_DAYS=N força a janela; sem histórico faz backfill de GA4_BACKFILL_DAYS)
  *   TASK=ga4_backfill          -> o backfill do GA4 em job PROPRIO: so os clientes de janela larga (cliente novo, tabela nova, job
@@ -202,6 +203,11 @@ async function main() {
       result = await runDailyMetricsBackfill(trigger, { clientId, dateFrom, dateTo });
       break;
     }
+    case "up_manager_daily": {
+      const { runUpManagerDaily } = await import("../services/up-manager-insights");
+      result = await runUpManagerDaily(new Date(), clientId);
+      break;
+    }
     case "ga4_daily":
       result = await runGa4DailyExtraction(trigger, { clientId, lookbackDays: envInt("LOOKBACK_DAYS") });
       break;
@@ -249,7 +255,7 @@ async function main() {
       result = await runGa4FreshnessCheck();
       break;
     default:
-      logger.error(`[upzero-sync-job] TASK desconhecida: "${task}". Válidas: upzero_transactional, upzero_analytics, meta_ads, nuvemshop_transactional, braavo_transactional, daily_metrics, ga4_daily, ga4_backfill, hourly_bundle, whatsapp_fix_phone_waba, run_migrations, paid_touchpoints, purge_archived_clients, sync_excluded_clients, sync_ads_accounts, check_data_freshness, ga4_discover.`);
+      logger.error(`[upzero-sync-job] TASK desconhecida: "${task}". Válidas: upzero_transactional, upzero_analytics, meta_ads, nuvemshop_transactional, braavo_transactional, daily_metrics, up_manager_daily, ga4_daily, ga4_backfill, hourly_bundle, whatsapp_fix_phone_waba, run_migrations, paid_touchpoints, purge_archived_clients, sync_excluded_clients, sync_ads_accounts, check_data_freshness, ga4_discover.`);
       process.exit(1);
   }
 

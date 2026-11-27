@@ -109,11 +109,12 @@ function filterOrdersByDate(orders: unknown[], url: URL): unknown[] {
 }
 
 // Simula a API da Nuvemshop: /orders (uma pagina), /orders/{id}/transactions e /products/{id}.
-const stubNuvemshop = (orders: unknown[]) => {
+const stubNuvemshop = (orders: unknown[], catalog: unknown[] = []) => {
   vi.stubGlobal("fetch", async (input: URL | string) => {
     const url = new URL(String(input));
     const path = url.pathname;
-    const body = /\/orders$/.test(path) ? filterOrdersByDate(orders, url) : /\/transactions$/.test(path) ? [] : { id: 1, name: "Produto", variants: [], images: [] };
+    const body = /\/orders$/.test(path) ? filterOrdersByDate(orders, url) : /\/products$/.test(path) ? catalog
+      : /\/transactions$/.test(path) ? [] : { id: 1, name: "Produto", variants: [], images: [] };
     return { ok: true, status: 200, statusText: "OK", json: async () => body };
   });
 };
@@ -248,5 +249,52 @@ describe("comportamento que nao pode mudar", () => {
     await sync();
     const sold = await rows<{ external_id: string; total_sold: number }>(`SELECT external_id, total_sold FROM products WHERE client_id = $1 ORDER BY external_id`, [CLIENT]);
     expect(sold.map((r) => [r.external_id, Number(r.total_sold)])).toEqual([["100:1", 2], ["100:2", 3]]);
+  });
+});
+
+
+describe("catálogo Nuvemshop", () => {
+  const syncCatalog = () => syncNuvemshopClient({ clientId: CLIENT, storeId: "1", accessToken: "t" });
+
+  it("mantém saldo por variante quando o SKU se repete no mesmo produto e em outro", async () => {
+    await pg.exec(`INSERT INTO products (id, client_id, external_id, sku, name, price)
+      VALUES ('p1', '${CLIENT}', '100:1', 'AAA', 'Produto existente', 10)`);
+    stubNuvemshop([order(1, [item(100, 2, "AAA")])], [
+      { id: 100, name: "Camiseta", variants: [
+        { id: 1, sku: "AAA", stock: 8 },
+        { id: 2, sku: "AAA", stock: 0 },
+      ] },
+      { id: 200, name: "Calça", variants: [{ id: 3, sku: "AAA", stock: 4 }] },
+    ]);
+
+    for (let run = 0; run < 2; run++) {
+      const result = await syncCatalog();
+      expect(result.errors).toEqual([]);
+      expect(result.catalogComplete).toBe(true);
+      expect(result.ordersComplete).toBe(true);
+    }
+    expect(await rows(`SELECT external_id, sku, stock FROM products ORDER BY external_id`)).toEqual([
+      { external_id: "100:1", sku: "AAA", stock: 8 },
+      { external_id: "100:2", sku: collisionSku("AAA", "100:2"), stock: 0 },
+      { external_id: "200:3", sku: collisionSku("AAA", "200:3"), stock: 4 },
+    ]);
+    expect(await rows(`SELECT p.external_id FROM order_items oi JOIN products p ON p.id = oi.product_id`))
+      .toEqual([{ external_id: "100:2" }]);
+  });
+
+  it("fecha os pedidos quando somente o catálogo teve erro", async () => {
+    await pg.exec(`ALTER TABLE products ADD CONSTRAINT price_positive CHECK (price >= 0)`);
+    try {
+      stubNuvemshop([order(1, [item(100, 1, "AAA")])], [
+        { id: 200, name: "Inválido", variants: [{ id: 1, sku: "BBB", price: -10 }] },
+      ]);
+      const result = await syncCatalog();
+      expect(result.errors).toHaveLength(1);
+      expect(result.catalogComplete).toBe(false);
+      expect(result.ordersComplete).toBe(true);
+      expect(await itemCount()).toBe(1);
+    } finally {
+      await pg.exec(`ALTER TABLE products DROP CONSTRAINT price_positive`);
+    }
   });
 });

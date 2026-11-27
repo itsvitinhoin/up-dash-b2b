@@ -1,5 +1,6 @@
 import { createSign } from "node:crypto";
 import { GoogleAuth } from "google-auth-library";
+import type { CheckoutDiagnosticData } from "./up-manager-funnel-diagnostic";
 
 const TOKEN_URL = "https://oauth2.googleapis.com/token";
 const DATA_API_BASE = "https://analyticsdata.googleapis.com/v1beta";
@@ -44,6 +45,8 @@ type ServiceAccount = {
 };
 
 type RunReportResponse = {
+  rowCount?: number;
+  metadata?: { subjectToThresholding?: boolean; dataLossFromOtherRow?: boolean; samplingMetadatas?: unknown[] };
   rows?: Array<{
     dimensionValues?: Array<{ value?: string }>;
     metricValues?: Array<{ value?: string }>;
@@ -213,7 +216,7 @@ function ga4Date(value: string | undefined): string {
   return raw;
 }
 
-async function runReport(propertyId: string, body: Record<string, unknown>): Promise<RunReportResponse> {
+async function runReport(propertyId: string, body: Record<string, unknown>, signal?: AbortSignal): Promise<RunReportResponse> {
   const token = await getAccessToken();
   if (!token) return {};
   const response = await fetch(`${DATA_API_BASE}/properties/${propertyId}:runReport`, {
@@ -223,6 +226,7 @@ async function runReport(propertyId: string, body: Record<string, unknown>): Pro
       "Content-Type": "application/json",
     },
     body: JSON.stringify(body),
+    signal,
   });
   const payload = (await response.json().catch(() => null)) as RunReportResponse & {
     error?: { message?: string };
@@ -231,6 +235,116 @@ async function runReport(propertyId: string, body: Record<string, unknown>): Pro
     throw new Error(payload?.error?.message ?? `GA4 runReport failed: ${response.status}`);
   }
   return payload;
+}
+
+export async function fetchGa4CheckoutDiagnostic(
+  propertyId: string,
+  current: { dateFrom: string; dateTo: string },
+  previous: { dateFrom: string; dateTo: string },
+): Promise<CheckoutDiagnosticData | null> {
+  if (!/^\d+$/.test(propertyId) || previous.dateTo >= current.dateFrom) return null;
+  const dateRanges = [
+    { name: "previous", startDate: previous.dateFrom, endDate: previous.dateTo },
+    { name: "current", startDate: current.dateFrom, endDate: current.dateTo },
+  ];
+  const signal = AbortSignal.timeout(12_000);
+  const limit = 10_000;
+  const report = (dimensions: string[], metrics: string[], events?: string[]) =>
+    runReport(propertyId, {
+      dateRanges,
+      dimensions: dimensions.map((name) => ({ name })),
+      metrics: metrics.map((name) => ({ name })),
+      limit,
+      ...(events && {
+        dimensionFilter: {
+          filter: {
+            fieldName: "eventName",
+            inListFilter: { values: events, caseSensitive: true },
+          },
+        },
+      }),
+    }, signal);
+  const complete = (result: RunReportResponse) =>
+    !result.metadata?.subjectToThresholding && !result.metadata?.dataLossFromOtherRow &&
+    !result.metadata?.samplingMetadatas?.length &&
+    (result.rowCount ?? 0) < limit &&
+    (result.rows?.length ?? 0) < limit &&
+    (result.rowCount ?? 0) <= (result.rows?.length ?? 0);
+  const [eventReport, itemReport] = await Promise.all([
+    report(
+      ["date", "sessionDefaultChannelGroup", "sessionCampaignName", "deviceCategory", "eventName"],
+      ["eventCount"],
+      ["view_item", "add_to_cart", "begin_checkout", "add_shipping_info", "add_payment_info", "purchase", "view_cart", "remove_from_cart"],
+    ),
+    report(
+      ["date", "sessionDefaultChannelGroup", "sessionCampaignName", "itemId", "itemName"],
+      ["itemsAddedToCart", "itemsCheckedOut"],
+    ).catch(() => null),
+  ]);
+  if (!complete(eventReport) || !eventReport.rows?.length) return null;
+  const rows = (result: RunReportResponse) => (result.rows ?? []).flatMap((row) => {
+    const [rawDate, channel, campaign, fourth, fifth, range] =
+      (row.dimensionValues ?? []).map(({ value }) => value ?? "");
+    const date = ga4Date(rawDate);
+    const period = date >= current.dateFrom && date <= current.dateTo ? "current" as const
+      : date >= previous.dateFrom && date <= previous.dateTo ? "previous" as const : null;
+    return period === range ? [{ row, period, channel, campaign, fourth, fifth }] : [];
+  });
+  return {
+    source: "ga4",
+    events: rows(eventReport).map(({ row, period, channel, campaign, fourth, fifth }) => ({
+      period, channel, campaign, device: fourth, event: fifth, count: metricValue(row, 0),
+    })),
+    items: itemReport && complete(itemReport)
+      ? rows(itemReport).map(({ row, period, channel, campaign, fourth, fifth }) => ({
+          period, channel, campaign, id: fourth, name: fifth || fourth,
+          carts: metricValue(row, 0), checkouts: metricValue(row, 1),
+        }))
+      : [],
+  };
+}
+
+export async function fetchGa4LandingEvidence(
+  propertyId: string, destinations: { host: string; path: string }[], current: { dateFrom: string; dateTo: string },
+  previous: { dateFrom: string; dateTo: string }, campaigns: string[] = [],
+) {
+  if (!/^\d+$/.test(propertyId) || (!destinations.length && !campaigns.length) || previous.dateTo >= current.dateFrom) return null;
+  const exact = (fieldName: string, value: string) => ({ filter: { fieldName, stringFilter: { matchType: "EXACT", value, caseSensitive: true } } });
+  const expressions: Record<string, unknown>[] = destinations.map(({ host, path }) => ({ andGroup: { expressions: [
+    { filter: { fieldName: "hostName", inListFilter: { values: [host, `www.${host}`], caseSensitive: false } } },
+    path === "/" ? exact("landingPage", path) : { filter: { fieldName: "landingPage", inListFilter: { values: [path, `${path}/`], caseSensitive: true } } },
+  ] } }));
+  if (campaigns.length) expressions.push({ filter: { fieldName: "sessionCampaignName", inListFilter: { values: campaigns, caseSensitive: false } } });
+  const dimensionFilter = { orGroup: { expressions } };
+  const dateRanges = [
+    { name: "previous", startDate: previous.dateFrom, endDate: previous.dateTo },
+    { name: "current", startDate: current.dateFrom, endDate: current.dateTo },
+  ];
+  const signal = AbortSignal.timeout(15_000);
+  const limit = 10_000;
+  const run = (dimensions: string[], metrics: string[]) => runReport(propertyId, {
+    dateRanges, dimensionFilter, dimensions: dimensions.map((name) => ({ name })), metrics: metrics.map((name) => ({ name })), limit,
+  }, signal).catch(() => null);
+  const complete = (report: RunReportResponse | null) => report && !report.metadata?.subjectToThresholding &&
+    !report.metadata?.dataLossFromOtherRow && !report.metadata?.samplingMetadatas?.length && (report.rowCount ?? 0) <= (report.rows?.length ?? 0);
+  const [traffic, products] = await Promise.all([
+    run(["hostName", "landingPage", "sessionCampaignName", "deviceCategory"], ["sessions", "engagedSessions", "ecommercePurchases", "userEngagementDuration"]),
+    run(["hostName", "landingPage", "itemId"], ["itemsViewed", "itemsAddedToCart", "itemsPurchased"]),
+  ]);
+  if (!complete(traffic) && !complete(products)) return null;
+  return {
+    traffic: complete(traffic) ? traffic?.rows?.flatMap((row) => {
+      const [host, path, campaign, device, period] = row.dimensionValues?.map(({ value }) => value ?? "") ?? [];
+      if ((period !== "previous" && period !== "current") || !host || !path) return [];
+      return [{ host, path, campaign, device, period, sessions: metricValue(row, 0), engaged: metricValue(row, 1),
+        purchases: metricValue(row, 2), engagementSeconds: metricValue(row, 3) }];
+    }) ?? [] : null,
+    products: complete(products) ? products?.rows?.flatMap((row) => {
+      const [host, path, id, period] = row.dimensionValues?.map(({ value }) => value ?? "") ?? [];
+      if ((period !== "previous" && period !== "current") || !host || !path || !id || id.startsWith("(")) return [];
+      return [{ host, path, id, period, views: metricValue(row, 0), carts: metricValue(row, 1), purchases: metricValue(row, 2) }];
+    }) ?? [] : null,
+  };
 }
 
 export async function fetchGa4FunnelMetrics(params: {
